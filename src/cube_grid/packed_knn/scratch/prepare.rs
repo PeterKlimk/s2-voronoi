@@ -10,6 +10,31 @@ struct DirectedRangeSummary {
     ring_candidates_eligible: usize,
 }
 
+#[cfg(target_feature = "avx2")]
+#[inline]
+fn append_masked_ring_keys(keys: &mut Vec<u64>, dots: [f32; 8], mut mask: u32, slot_base: usize) {
+    debug_assert_ne!(mask, 0);
+    let count = mask.count_ones() as usize;
+    keys.reserve(count);
+    let old_len = keys.len();
+    let dst = keys.spare_capacity_mut().as_mut_ptr() as *mut u64;
+    let mut written = 0usize;
+    while mask != 0 {
+        let lane = mask.trailing_zeros() as usize;
+        // SAFETY: `reserve(count)` established space for every set mask lane;
+        // `written` advances exactly once per set bit.
+        unsafe {
+            dst.add(written)
+                .write(make_desc_key(dots[lane], (slot_base + lane) as u32));
+        }
+        written += 1;
+        mask &= mask - 1;
+    }
+    debug_assert_eq!(written, count);
+    // SAFETY: the loop initialized exactly `count` reserved entries.
+    unsafe { keys.set_len(old_len + count) };
+}
+
 #[inline]
 fn finish_interior_security(
     s_min: f32,
@@ -624,30 +649,40 @@ impl PackedKnnCellScratch {
                     .zip(chunk0_keys.iter_mut())
                 {
                     let (dots_a, dots_b) = candidates_a.dots_pair(&candidates_b, qx, qy, qz);
-                    let mut mask_a = dots_a.mask_gt(threshold);
-                    let mut mask_b = dots_b.mask_gt(threshold);
+                    let mask_a = dots_a.mask_gt(threshold);
+                    let mask_b = dots_b.mask_gt(threshold);
                     if mask_a | mask_b == 0 {
                         continue;
                     }
 
                     if mask_a != 0 {
                         let dots_arr = dots_a.to_array();
-                        while mask_a != 0 {
-                            let lane = mask_a.trailing_zeros() as usize;
-                            let slot = (soa_start + i + lane) as u32;
-                            let dot = dots_arr[lane];
-                            keys.push(make_desc_key(dot, slot));
-                            mask_a &= mask_a - 1;
+                        #[cfg(target_feature = "avx2")]
+                        append_masked_ring_keys(keys, dots_arr, mask_a, soa_start + i);
+                        #[cfg(not(target_feature = "avx2"))]
+                        {
+                            let mut mask_a = mask_a;
+                            while mask_a != 0 {
+                                let lane = mask_a.trailing_zeros() as usize;
+                                let slot = (soa_start + i + lane) as u32;
+                                keys.push(make_desc_key(dots_arr[lane], slot));
+                                mask_a &= mask_a - 1;
+                            }
                         }
                     }
                     if mask_b != 0 {
                         let dots_arr = dots_b.to_array();
-                        while mask_b != 0 {
-                            let lane = mask_b.trailing_zeros() as usize;
-                            let slot = (soa_start + i + 8 + lane) as u32;
-                            let dot = dots_arr[lane];
-                            keys.push(make_desc_key(dot, slot));
-                            mask_b &= mask_b - 1;
+                        #[cfg(target_feature = "avx2")]
+                        append_masked_ring_keys(keys, dots_arr, mask_b, soa_start + i + 8);
+                        #[cfg(not(target_feature = "avx2"))]
+                        {
+                            let mut mask_b = mask_b;
+                            while mask_b != 0 {
+                                let lane = mask_b.trailing_zeros() as usize;
+                                let slot = (soa_start + i + 8 + lane) as u32;
+                                keys.push(make_desc_key(dots_arr[lane], slot));
+                                mask_b &= mask_b - 1;
+                            }
                         }
                     }
                 }
@@ -672,18 +707,23 @@ impl PackedKnnCellScratch {
                     .zip(chunk0_keys.iter_mut())
                 {
                     let dots = candidates.dots(qx, qy, qz);
-                    let mut mask_bits = dots.mask_gt(threshold);
+                    let mask_bits = dots.mask_gt(threshold);
                     if mask_bits == 0 {
                         continue;
                     }
 
                     let dots_arr = dots.to_array();
-                    while mask_bits != 0 {
-                        let lane = mask_bits.trailing_zeros() as usize;
-                        let slot = (soa_start + i + lane) as u32;
-                        let dot = dots_arr[lane];
-                        keys.push(make_desc_key(dot, slot));
-                        mask_bits &= mask_bits - 1;
+                    #[cfg(target_feature = "avx2")]
+                    append_masked_ring_keys(keys, dots_arr, mask_bits, soa_start + i);
+                    #[cfg(not(target_feature = "avx2"))]
+                    {
+                        let mut mask_bits = mask_bits;
+                        while mask_bits != 0 {
+                            let lane = mask_bits.trailing_zeros() as usize;
+                            let slot = (soa_start + i + lane) as u32;
+                            keys.push(make_desc_key(dots_arr[lane], slot));
+                            mask_bits &= mask_bits - 1;
+                        }
                     }
                 }
             }
@@ -728,18 +768,23 @@ impl PackedKnnCellScratch {
                     .zip(chunk0_keys.iter_mut())
                 {
                     let dots = candidates.dots(qx, qy, qz);
-                    let mut mask_bits = dots.mask_gt(threshold) & valid_bits;
+                    let mask_bits = dots.mask_gt(threshold) & valid_bits;
                     if mask_bits == 0 {
                         continue;
                     }
 
                     let dots_arr = dots.to_array();
-                    while mask_bits != 0 {
-                        let lane = mask_bits.trailing_zeros() as usize;
-                        let slot = (slot_base + lane) as u32;
-                        let dot = dots_arr[lane];
-                        keys.push(make_desc_key(dot, slot));
-                        mask_bits &= mask_bits - 1;
+                    #[cfg(target_feature = "avx2")]
+                    append_masked_ring_keys(keys, dots_arr, mask_bits, slot_base);
+                    #[cfg(not(target_feature = "avx2"))]
+                    {
+                        let mut mask_bits = mask_bits;
+                        while mask_bits != 0 {
+                            let lane = mask_bits.trailing_zeros() as usize;
+                            let slot = (slot_base + lane) as u32;
+                            keys.push(make_desc_key(dots_arr[lane], slot));
+                            mask_bits &= mask_bits - 1;
+                        }
                     }
                 }
             }

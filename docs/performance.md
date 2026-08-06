@@ -159,7 +159,9 @@ rebuilding entirely (residual defects then fail plain `compute` loudly).
 
 The machine is noisy — per-binary code-layout shifts alone are ~1-2% at 500k single-threaded — so
 compare commits with interleaved paired runs, not back-to-back batches, and treat sub-1% deltas as
-noise:
+noise. When comparing manually copied binaries, invoke them through equal-length alias paths as the
+scripts do: different `argv[0]` lengths alone measurably changed uniform-path retired work on the
+reference host, despite byte-identical executable `.text`:
 
 ```bash
 ./scripts/bench_build.sh --chain 6
@@ -1866,13 +1868,19 @@ Do not broadly retry these without a materially different design or workload:
   depend on each query's coupled direction and threshold; there is no useful whole-group skip behind
   the hot branch, consistent with the earlier failed ring-cell cap pruning.
 
-  Exact-reserve/spare-capacity publication was then tested for nonempty masks. Applying it to every
-  ring shape reduced pinned native instructions 0.74% and branches 1.01%, but at 4M/16 workers
-  branch misses rose 0.61% and cycles were neutral. Restricting it to the dominant paired chunks and
-  sharing one reserve/publication reduced native 4M instructions 0.25% and branches 0.43%, yet branch
-  misses rose 0.46% in fourteen of fifteen pairs. Generic-target pinned runs added 0.20--0.25%
-  instructions and 0.25--0.32% cycles. Keep ordinary `Vec::push`: the per-entry capacity control is
-  cheaper than the reserve/popcount/raw-publication state in the branch-latency target regime.
+  Exact-reserve/spare-capacity publication is retained for nonempty masks on native AVX2. After a
+  contaminated first pass was discarded, twenty-five quiet physically pinned 4M/16-worker uniform
+  pairs reduced cycles 0.99% (18/25 favorable), instructions 0.46%, and branches 0.48%. Fifteen
+  three-build all-core pairs confirmed 0.84% fewer cycles (14/15), 0.48% fewer instructions, and
+  0.53% fewer branches. A final causal rebuild invoked through equal-length paths reduced physically
+  pinned cycles 1.15% in all fifteen pairs, instructions 0.57%, and branches 0.54%. Pinned Fibonacci
+  and clustered controls reduced cycles 1.24% and 0.55%; ten 4M Fibonacci all-core pairs improved
+  cycles 0.90% directionally while reducing instructions/branches about 0.52%. Hardware branch
+  misses rose about 0.2--0.5%, but total cycles consistently fell: publishing a mask's roughly two
+  selected keys with one reserve and one length update removes more dependent `Vec::push` control
+  than the extra misses cost. Non-AVX2 builds keep the original push loop; the baseline and final
+  generic executable `.text` sections were byte-identical, and equal-path counter controls were
+  neutral.
 - Fusing the full and overlapping remainder chunks for 9--15 point packed ring ranges shared the
   query broadcasts and one combined-empty test, directly targeting the hottest sampled branch in
   `prepare_group_directed`. A rotated Windows 2.5M Fibonacci phase ring was directionally favorable
