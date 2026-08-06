@@ -876,6 +876,17 @@ tasks and are not duplicated here.
   2.3% mega gain does not justify eight new size kernels. An N=16-only variant was retired-work
   neutral and made mega cycles 0.79% worse. Raw results are under `/tmp/s2-exp-select8-build/`.
 
+- **Accepted 16-key block merge:** `a42980f` removed both dedicated 24-key network kernels and
+  their comparator schedule. Lengths 17--24 now reuse the exact 16-key network, retain the existing
+  tiny suffix path for 1--3 keys, and use the retained 8-key network plus a branchless backward
+  merge for 4--8 keys; 25--32 reuse the existing two-run 32 path. This removed 581 net
+  implementation/data lines and about 7--8 KiB linked text. The isolated N=20--24 sort is
+  81--108% slower, but seven-pair native whole-build counters kept ordinary instructions within
+  0.04%; cycles rose 0.43% Fibonacci and 0.92% uniform, while interleaved wall rose 0.71%/0.62%.
+  Clustered/mega wall improved about 1%, portable cycles stayed within 0.5%, and 1M 16-thread
+  controls showed no regression. Exhaustive run-interleaving and duplicate/`u64::MAX` tests pin
+  the replacement. Raw evidence is under `/tmp/s2-exp-block-merge/`.
+
 ### WORK-001 — Output-resolution certificate soak and component hardening
 
 - **Priority:** P2

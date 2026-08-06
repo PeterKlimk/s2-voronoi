@@ -638,6 +638,17 @@ fell by up to 0.22%, but interleaved Fibonacci/uniform/clustered wall time rose 
 mega cycles 0.79% worse. Do not add this concentrated-input specialization without a substantially
 simpler network family or a demonstrated ordinary-input win.
 
+A follow-up met that simpler-family threshold for the separate full-sort path. Lengths 17--24 now
+sort one 16-key network block, sort a suffix of at most eight with the retained 8-key network, and
+merge backward in place; lengths 25--32 use the existing two-run 32 path. This retired both 24-key
+kernels and their schedule: 581 net implementation/data lines and about 7--8 KiB linked text. The
+isolated N=20--24 operation became 81--108% slower, but whole-build cost remained within the allowed
+modest simplification budget. Native Fibonacci/uniform instructions stayed within 0.04%, cycles
+rose 0.43%/0.92%, and interleaved wall rose 0.71%/0.62%; clustered and mega wall improved about 1%.
+Portable cycles stayed within 0.5%, and 1M 16-thread Fibonacci, uniform, mega, and cubed controls
+showed no regression. The block merge is therefore preferred over restoring a large size-specific
+network.
+
 The AVX2 small-sort dispatcher keeps its eight-element network out of line. Inlining that leaf at
 both dispatch sites made every sort preserve two additional callee-saved registers; outlining it
 reduced the dispatcher from 1,538 to 847 bytes and the combined dispatcher/leaf fixed work by
