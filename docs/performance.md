@@ -102,12 +102,6 @@ Useful flags:
   override, the default is 2x workers through 8 workers and a 96-bin coarse layout at 9+; severely
   imbalanced coarse layouts may refine to 216 bins.
 - `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
-- `VORONOI_MESH_RECONCILE_TELEMETRY=1` — on defect-bearing builds, emit a read-only
-  `RECONCILE_KV` simulation of the primary reconciliation round before mutation. It reports
-  inferred endpoint-pair distances, origin-specific histograms, and the diameter of the vertex
-  equivalence components the current policy would create, plus the number rejected by the
-  no-chain diameter gate. This intentionally repeats cold-path reconciliation work and is for
-  correctness audits, not performance measurements; clean builds skip even the environment lookup.
 - `VORONOI_MESH_GRID_DENSITY=<f>` — spatial-grid target density (points per cell) for sweeps. It is
   snapshotted on first use; run each density in a separate process.
 
@@ -1237,12 +1231,12 @@ Assembly/live-dedup swarm backlog (2026-07-13):
 - **Flatten per-local edge-check queues only as a memory redesign:** `Vec<Vec<EdgeCheck>>` pays a
   `Vec` header per local generator. A node arena plus head/tail arrays could reduce empty-queue
   metadata, but it loses the current zero-copy transfer and may add traversal/copy work. Require
-  queue-count telemetry and preserve exact directed enqueue order, mismatch origins, and high-degree
-  behavior before prototyping.
-- **Deduplicate reconciliation work by unresolved edge key:** defect inputs can report multiple origins for
-  one edge. A reconciliation-only unique-key view may avoid repeated work while retaining the full
-  diagnostic origin list. Existing large probes found only a few mismatch records, so this remains
-  a cold-path robustness idea rather than a production-speed candidate.
+  queue-count telemetry and preserve exact directed enqueue order, mismatch-key emission, and
+  high-degree behavior before prototyping.
+- **Deduplicate reconciliation work by unresolved edge key:** defect inputs can report the same key
+  more than once. A reconciliation-only unique-key view may avoid repeated work, but existing large
+  probes found only a few mismatch records, so this remains a cold-path robustness idea rather than
+  a production-speed candidate.
 
 Lower-confidence cleanup candidates, to attempt only with structural counters or activation data:
 

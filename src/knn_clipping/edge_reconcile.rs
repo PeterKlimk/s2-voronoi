@@ -10,16 +10,12 @@
 //! - shared-edge endpoint identity mismatches, typically from near-degenerate vertex ownership
 //!   choices where adjacent polygons pick different generator triplets for the same corner
 
-mod telemetry;
-
 use glam::Vec3;
 
 use crate::cell_layout::{CellSpanError, LiveCellLayout};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::VertexKey;
 use crate::live_dedup::{EdgeKey, EdgeRecord, ShardedVertexKeys};
-
-pub(crate) use telemetry::emit_primary_reconcile_telemetry;
 
 /// Read-only view of vertex keys passed to reconciliation. `Flat` backs the
 /// unit tests (and any caller holding a contiguous array); `Sharded` is the
@@ -417,14 +413,13 @@ pub(crate) enum ReconcileApply {
     Rebuild,
 }
 
-/// Immutable diagnostic/oracle choices for one defect-bearing reconciliation.
+/// Immutable oracle choices for one defect-bearing reconciliation.
 /// Production constructs this only after confirming that mismatch records exist;
 /// explicit constructors keep unit differentials independent of process state.
 #[derive(Clone, Copy)]
 pub(crate) struct ReconcileOptions {
     apply: ReconcileApply,
     force_global_dupscan: bool,
-    emit_telemetry: bool,
 }
 
 impl ReconcileOptions {
@@ -432,7 +427,6 @@ impl ReconcileOptions {
         Self {
             apply,
             force_global_dupscan: false,
-            emit_telemetry: false,
         }
     }
 
@@ -448,12 +442,7 @@ impl ReconcileOptions {
                 std::env::var("VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN"),
                 Ok(v) if v == "1"
             ),
-            emit_telemetry: std::env::var_os("VORONOI_MESH_RECONCILE_TELEMETRY").is_some(),
         }
-    }
-
-    pub(crate) const fn emit_telemetry(self) -> bool {
-        self.emit_telemetry
     }
 }
 

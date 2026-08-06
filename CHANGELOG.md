@@ -17,13 +17,12 @@ Initial release.
   resumes the nearest-neighbor stream, and rounds only final stored positions.
   This resolves former dense-cap and mega defects before post-assembly reconciliation
   without changing clean-path performance.
-- Edge-reconciliation observability and coverage: `ComputeReport::reconciliation_edge_records`
-  reports each shared-edge mismatch that reached post-assembly reconciliation,
-  tagged with an `EdgeMismatchOrigin` naming the detection path; a
-  deterministic net (`tests/edge_reconciliation.rs`) pins a real 2M-scale defect
-  site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
-  detection/reconciliation paths, asserting strict output validity (see
-  engineering-findings #13).
+- Edge-reconciliation observability and coverage: `ComputeReport` reports mismatch counts and
+  unresolved generator pairs, while a deterministic net (`tests/edge_reconciliation.rs`) pins a
+  real 2M-scale defect site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
+  detection/reconciliation paths, asserting strict output validity (see engineering-findings #13).
+  The temporary detector-origin taxonomy and duplicated read-only telemetry used during the audit
+  were retired before release; assembly now passes compact edge-key records directly to reconciliation.
 - Micro-optimization batch from a screened 17-branch matrix:
   paired-proven stack (~-36ms total
   at 500k ST, -120ms cell construction at 2M) plus eight prior-better

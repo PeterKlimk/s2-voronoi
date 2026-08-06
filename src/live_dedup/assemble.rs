@@ -1,7 +1,5 @@
 //! Assembly helpers for live dedup.
 
-mod telemetry;
-
 use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -11,7 +9,7 @@ use super::edge_checks::resolve_edge_check_overflow;
 #[cfg(debug_assertions)]
 use super::packed::INVALID_INDEX;
 use super::shard::ShardFinal;
-use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, EdgeMismatch};
+use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, EdgeRecord};
 use super::ShardedCellsData;
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::VertexKey;
@@ -259,7 +257,7 @@ fn patch_deferred_slots_with_fallback(
 }
 
 struct CollectedShardBookkeeping {
-    edge_mismatches: Vec<EdgeMismatch>,
+    edge_mismatches: Vec<EdgeRecord>,
     edge_check_overflow: Vec<EdgeCheckOverflow>,
     deferred_slots: Vec<DeferredSlot>,
 }
@@ -895,9 +893,6 @@ pub(super) fn assemble_sharded_live_dedup(
 
     // `ComputeReport` already records a clean result, so keep that path free
     // of both the environment lookup and an all-zero diagnostic line.
-    if !edge_mismatches.is_empty() {
-        telemetry::maybe_emit_edge_mismatch_origins(&edge_mismatches);
-    }
 
     let t_deferred = Timer::start();
     let deferred_resolution_drift_exceeded = patch_deferred_slots_with_fallback(

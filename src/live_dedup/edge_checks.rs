@@ -9,8 +9,8 @@ use super::binning::BinAssignment;
 use super::packed::{pack_edge, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeMismatch, EdgeMismatchOrigin,
-    EdgeOverflowLocal, EdgeToLater, LocalId,
+    BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeRecord, EdgeToLater,
+    LocalId,
 };
 use super::with_two_mut;
 use crate::live_dedup::VertexKey;
@@ -88,7 +88,7 @@ fn thirds_verified(key: EdgeKey, endpoint_keys: [VertexKey; 2]) -> [u32; 2] {
 #[inline]
 pub(super) fn thirds_for_emit(
     keys_verified: bool,
-    unresolved: &mut Vec<EdgeMismatch>,
+    unresolved: &mut Vec<EdgeRecord>,
     key: EdgeKey,
     endpoint_keys: [VertexKey; 2],
 ) -> [u32; 2] {
@@ -108,7 +108,7 @@ pub(super) fn thirds_for_emit(
 /// XOR of structured ids is not uniform.
 #[inline]
 pub(super) fn thirds_or_record(
-    unresolved: &mut Vec<EdgeMismatch>,
+    unresolved: &mut Vec<EdgeRecord>,
     key: EdgeKey,
     endpoint_keys: [VertexKey; 2],
 ) -> [u32; 2] {
@@ -116,10 +116,7 @@ pub(super) fn thirds_or_record(
     let t0 = third_for_edge_endpoint(endpoint_keys[0], a, b);
     let t1 = third_for_edge_endpoint(endpoint_keys[1], a, b);
     if t0.is_none() || t1.is_none() {
-        unresolved.push(EdgeMismatch {
-            key,
-            origin: EdgeMismatchOrigin::EndpointKeyMismatch,
-        });
+        unresolved.push(EdgeRecord { key });
     }
     [t0.unwrap_or(MALFORMED_THIRD), t1.unwrap_or(MALFORMED_THIRD)]
 }
@@ -357,10 +354,10 @@ pub(super) fn collect_and_resolve_cell_edges(
                 // handled defect, not an invariant violation; debug builds
                 // must not abort (this only makes debug match release).
                 if duplicate {
-                    shard.output.edge_mismatches.push(EdgeMismatch {
-                        key: edge_key,
-                        origin: EdgeMismatchOrigin::InBinDuplicateSide,
-                    });
+                    shard
+                        .output
+                        .edge_mismatches
+                        .push(EdgeRecord { key: edge_key });
                 }
 
                 let my_thirds = thirds_for_emit(
@@ -394,17 +391,17 @@ pub(super) fn collect_and_resolve_cell_edges(
                     && !my_thirds.contains(&MALFORMED_THIRD)
                     && !check.thirds.contains(&MALFORMED_THIRD)
                 {
-                    shard.output.edge_mismatches.push(EdgeMismatch {
-                        key: edge_key,
-                        origin: EdgeMismatchOrigin::InBinThirdsMismatch,
-                    });
+                    shard
+                        .output
+                        .edge_mismatches
+                        .push(EdgeRecord { key: edge_key });
                 }
             } else {
                 // Missing side - earlier neighbor didn't emit check
-                shard.output.edge_mismatches.push(EdgeMismatch {
-                    key: edge_key,
-                    origin: EdgeMismatchOrigin::InBinMissingCheck,
-                });
+                shard
+                    .output
+                    .edge_mismatches
+                    .push(EdgeRecord { key: edge_key });
             }
         }
     }
@@ -413,9 +410,8 @@ pub(super) fn collect_and_resolve_cell_edges(
     // SAFETY: the same partition invariant maintained by the edge loop leaves
     // this exact suffix unmatched.
     for check in unsafe { incoming_checks.get_unchecked(matched_count..) } {
-        shard.output.edge_mismatches.push(EdgeMismatch {
+        shard.output.edge_mismatches.push(EdgeRecord {
             key: edge_check_key(cell_idx, *check, slot_points),
-            origin: EdgeMismatchOrigin::InBinUnconsumedCheck,
         });
     }
 
@@ -443,7 +439,7 @@ fn resolve_pair_bucket(
     high_bin: usize,
     sorted: &[OverflowSortHandle],
     edge_check_overflow: &[EdgeCheckOverflow],
-    edge_mismatches: &mut Vec<EdgeMismatch>,
+    edge_mismatches: &mut Vec<EdgeRecord>,
 ) {
     let mut i = 0usize;
     while i < sorted.len() {
@@ -455,20 +451,14 @@ fn resolve_pair_bucket(
         let run_len = run_end - i;
 
         if run_len == 1 {
-            edge_mismatches.push(EdgeMismatch {
-                key,
-                origin: EdgeMismatchOrigin::CrossBinSingleSided,
-            });
+            edge_mismatches.push(EdgeRecord { key });
         } else if run_len == 2 {
             let a = edge_check_overflow[sorted[i].index];
             let b = edge_check_overflow[sorted[i + 1].index];
             if a.side == b.side {
                 // Duplicate cross-bin attribution. This is a handled defect,
                 // so leave it to reconciliation rather than pairing it.
-                edge_mismatches.push(EdgeMismatch {
-                    key: a.key,
-                    origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
-                });
+                edge_mismatches.push(EdgeRecord { key: a.key });
             } else {
                 let a_bin = a.source_bin.as_usize();
                 let b_bin = b.source_bin.as_usize();
@@ -513,34 +503,22 @@ fn resolve_pair_bucket(
                     // emitting side; avoid double-reporting it as thirds drift.
                     if !a.thirds.contains(&MALFORMED_THIRD) && !b.thirds.contains(&MALFORMED_THIRD)
                     {
-                        edge_mismatches.push(EdgeMismatch {
-                            key: a.key,
-                            origin: EdgeMismatchOrigin::CrossBinThirdsMismatch,
-                        });
+                        edge_mismatches.push(EdgeRecord { key: a.key });
                     }
                 } else if conflict {
-                    edge_mismatches.push(EdgeMismatch {
-                        key: a.key,
-                        origin: EdgeMismatchOrigin::CrossBinSlotConflict,
-                    });
+                    edge_mismatches.push(EdgeRecord { key: a.key });
                 }
             }
         } else {
             // Three or more records make opposite-side pairing ambiguous.
             // Leave the whole run to deterministic vertex-key reconciliation.
-            edge_mismatches.push(EdgeMismatch {
-                key,
-                origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
-            });
+            edge_mismatches.push(EdgeRecord { key });
             let first_side = edge_check_overflow[sorted[i].index].side;
             if sorted[i..run_end]
                 .iter()
                 .all(|entry| edge_check_overflow[entry.index].side == first_side)
             {
-                edge_mismatches.push(EdgeMismatch {
-                    key,
-                    origin: EdgeMismatchOrigin::CrossBinSingleSided,
-                });
+                edge_mismatches.push(EdgeRecord { key });
             }
         }
         i = run_end;
@@ -556,7 +534,7 @@ fn resolve_pair_bucket(
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &[EdgeCheckOverflow],
-    edge_mismatches: &mut Vec<EdgeMismatch>,
+    edge_mismatches: &mut Vec<EdgeRecord>,
 ) -> OverflowResolveTiming {
     let t_edge_sort = Timer::start();
     // Resolution only requires contiguous equal-key runs. Group by shard pair
@@ -738,10 +716,6 @@ mod tests {
         );
 
         assert_eq!(shard.output.edge_mismatches.len(), 1);
-        assert_eq!(
-            shard.output.edge_mismatches[0].origin,
-            EdgeMismatchOrigin::InBinDuplicateSide
-        );
         assert_eq!(shard.output.edge_mismatches[0].key, pack_edge(0, 1));
     }
 
@@ -754,14 +728,10 @@ mod tests {
         assert_eq!(thirds, [5, 30]);
         assert!(unresolved.is_empty());
 
-        // One malformed endpoint: sentinel third + one EndpointKeyMismatch.
+        // One malformed endpoint: sentinel third + one defect record.
         let thirds = thirds_or_record(&mut unresolved, key, [[5, 10, 20], [10, 25, 30]]);
         assert_eq!(thirds, [5, MALFORMED_THIRD]);
         assert_eq!(unresolved.len(), 1);
-        assert_eq!(
-            unresolved[0].origin,
-            EdgeMismatchOrigin::EndpointKeyMismatch
-        );
         assert_eq!(unresolved[0].key, key);
     }
 

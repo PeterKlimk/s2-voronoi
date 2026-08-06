@@ -6,7 +6,7 @@ use crate::knn_clipping::edge_reconcile::{
 use crate::live_dedup::binning::BinAssignment;
 use crate::live_dedup::packed::{pack_edge, INVALID_INDEX};
 use crate::live_dedup::shard::ShardState;
-use crate::live_dedup::types::{EdgeCheckOverflow, EdgeMismatchOrigin, LocalId};
+use crate::live_dedup::types::{EdgeCheckOverflow, LocalId};
 use crate::live_dedup::{EdgeRecord, ShardedCellsData};
 use glam::Vec3;
 use std::collections::BTreeSet;
@@ -71,14 +71,16 @@ fn exact_zero_hint_confirmation_preserves_count_and_deduplicates_pairs() {
 }
 
 #[test]
+fn reconciliation_edge_record_is_one_packed_key() {
+    assert_eq!(std::mem::size_of::<EdgeRecord>(), 8);
+}
+
+#[test]
 fn shard_bookkeeping_collection_reserves_drains_and_preserves_order() {
     let mut shards = vec![ShardState::new(0), ShardState::new(0)];
     for (ordinal, shard) in shards.iter_mut().enumerate() {
         let key = pack_edge(ordinal as u32, ordinal as u32 + 10);
-        shard.output.edge_mismatches.push(EdgeMismatch {
-            key,
-            origin: EdgeMismatchOrigin::InBinMissingCheck,
-        });
+        shard.output.edge_mismatches.push(EdgeRecord { key });
         shard.output.edge_check_overflow.push(EdgeCheckOverflow {
             key,
             side: ordinal as u8,
@@ -321,11 +323,7 @@ fn overflow_duplicate_runs_do_not_patch_an_arbitrary_pair() {
         resolve_edge_check_overflow(&mut shards, &overflow, &mut unresolved);
 
         assert_eq!(unresolved.len(), 1, "sides={sides:?}");
-        assert_eq!(
-            unresolved[0].origin,
-            EdgeMismatchOrigin::CrossBinDuplicateSide,
-            "sides={sides:?}"
-        );
+        assert_eq!(unresolved[0].key, edge_key, "sides={sides:?}");
         assert!(
             shards
                 .iter()
@@ -357,14 +355,8 @@ fn overflow_duplicate_run_without_opposite_side_reports_both_defects() {
 
     resolve_edge_check_overflow(&mut shards, &overflow, &mut unresolved);
 
-    let origins: BTreeSet<_> = unresolved.iter().map(|entry| entry.origin).collect();
-    assert_eq!(
-        origins,
-        BTreeSet::from([
-            EdgeMismatchOrigin::CrossBinDuplicateSide,
-            EdgeMismatchOrigin::CrossBinSingleSided,
-        ])
-    );
+    assert_eq!(unresolved.len(), 2);
+    assert!(unresolved.iter().all(|entry| entry.key == edge_key));
 }
 
 #[test]
@@ -459,11 +451,6 @@ fn assembly_then_reconcile_handles_overflow_fallback_and_unresolved_edge() {
         "deferred slot should be patched through fallback ownership before reconciliation"
     );
 
-    let reconcile_input: Vec<EdgeRecord> = assembled
-        .edge_mismatches
-        .iter()
-        .map(|edge| EdgeRecord { key: edge.key })
-        .collect();
     let mut cells = assembled.cells.clone();
     let mut cell_indices = assembled.cell_indices.clone();
     let spans_before: Vec<Vec<u32>> = cells
@@ -471,7 +458,7 @@ fn assembly_then_reconcile_handles_overflow_fallback_and_unresolved_edge() {
         .map(|c| cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()].to_vec())
         .collect();
     let _residual = reconcile_edge_mismatches(
-        &reconcile_input,
+        &assembled.edge_mismatches,
         &assembled.vertices,
         &mut cells,
         &mut cell_indices,

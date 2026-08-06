@@ -40,7 +40,7 @@ echo "Binary: $BIN"
 echo "Output: $OUT  (MAX_N=$MAX_N, RAYON_NUM_THREADS=$RAYON_NUM_THREADS)"
 echo
 
-echo "dist,n,seed,param,result,defects,residual_edges,reconciliation_residual,valid,local_rebuild_attempted,local_rebuild_accepted,peak_mb,origins" > "$OUT"
+echo "dist,n,seed,param,result,defects,residual_edges,reconciliation_residual,valid,local_rebuild_attempted,local_rebuild_accepted,peak_mb" > "$OUT"
 
 invalid=0
 errored=0
@@ -61,12 +61,12 @@ run_case() { # dist n seed param
     | grep -o 'CASERESULT .*' | head -1)"
   if [ -z "$line" ]; then
     echo "  FAIL $dist n=$n seed=$seed (no CASERESULT — process died, likely OOM)"
-    echo "$dist,$n,$seed,$param,died,-,-,-,-,-,-,-,-" >> "$OUT"
+    echo "$dist,$n,$seed,$param,died,-,-,-,-,-,-,-" >> "$OUT"
     invalid=$((invalid + 1))
     return
   fi
   # Parse "key=value" tokens.
-  local result defects residual_edges reconciliation_residual valid local_rebuild_attempted local_rebuild_accepted peak origins
+  local result defects residual_edges reconciliation_residual valid local_rebuild_attempted local_rebuild_accepted peak
   result="$(sed -n 's/.* result=\([^ ]*\).*/\1/p' <<<"$line")"
   defects="$(sed -n 's/.* defects=\([^ ]*\).*/\1/p' <<<"$line")"
   residual_edges="$(sed -n 's/.* residual_edges=\([^ ]*\).*/\1/p' <<<"$line")"
@@ -79,8 +79,7 @@ run_case() { # dist n seed param
   local_rebuild_accepted="$(sed -n 's/.* local_rebuild_accepted=\([^ ]*\).*/\1/p' <<<"$line")"
   local_rebuild_accepted="${local_rebuild_accepted:--}"
   peak="$(sed -n 's/.* peak_mb=\([^ ]*\).*/\1/p' <<<"$line")"
-  origins="$(sed -n 's/.* origins=\(.*\)$/\1/p' <<<"$line")"
-  echo "$dist,$n,$seed,$param,$result,$defects,$residual_edges,$reconciliation_residual,$valid,$local_rebuild_attempted,$local_rebuild_accepted,$peak,$origins" >> "$OUT"
+  echo "$dist,$n,$seed,$param,$result,$defects,$residual_edges,$reconciliation_residual,$valid,$local_rebuild_attempted,$local_rebuild_accepted,$peak" >> "$OUT"
   printf "  %-11s n=%-8s seed=%-3s result=%-3s defects=%-4s residual=%-4s reconcile=%-3s valid=%-5s rebuild=%s/%s peak=%sMB\n" \
     "$dist" "$n" "$seed" "$result" "$defects" "$residual_edges" "$reconciliation_residual" "$valid" "$local_rebuild_attempted" "$local_rebuild_accepted" "$peak"
   if [ "$result" = "err" ]; then

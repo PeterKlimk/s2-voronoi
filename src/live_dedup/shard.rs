@@ -1,7 +1,7 @@
 //! Shard-local state for live dedup.
 
 use super::types::{
-    BinId, CellReferenceOverride, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeMismatch, LocalId,
+    BinId, CellReferenceOverride, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeRecord, LocalId,
 };
 use crate::live_dedup::VertexKey;
 use glam::Vec3;
@@ -32,7 +32,7 @@ pub(crate) struct ShardOutput {
     /// owns this shard exclusively; deferred off-shard references are applied
     /// at their owner before final assembly.
     pub(crate) vertex_incidence: Vec<u8>,
-    pub(super) edge_mismatches: Vec<EdgeMismatch>,
+    pub(super) edge_mismatches: Vec<EdgeRecord>,
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     /// Cell slots whose owner bin is off-shard and must be patched during assembly.
     pub(crate) deferred_slots: Vec<DeferredSlot>,

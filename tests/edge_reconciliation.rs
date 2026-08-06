@@ -57,15 +57,13 @@
 //! invariant that holds across all layouts is the contract itself: strict
 //! validity after reconciliation.
 //!
-//! ## Origin coverage
+//! ## Detection coverage
 //!
-//! Deterministically exercised: InBinThirdsMismatch, InBinUnconsumedCheck,
-//! CrossBinSingleSided. CrossBinThirdsMismatch: deterministic pin lost at
-//! stage 0 (coverage gap, see above). Not covered:
-//! InBinMissingCheck (believed unreachable by construction — an edge to an
-//! earlier same-bin neighbor only enters a cell via a replayed seed, and a
-//! seed implies its check is present; the branch remains as a conservative
-//! reconciliation route) and CrossBinDuplicateSide (handled duplicate-edge defect).
+//! The fixtures exercise same-bin and cross-bin mismatch recording, compact
+//! generator-pair handoff, both reconciliation apply backends, and strict final
+//! validation. Detailed detector labels were retired with the duplicated
+//! origin telemetry; direct unit tests pin malformed-key and duplicate-side
+//! emission.
 //!
 //! If a numerics/tolerance/policy change shifts the defects and these tests
 //! fail, re-run the discovery probes (`probe_*`, ignored by default) to find
@@ -76,8 +74,7 @@ mod support;
 use support::env::with_env_vars;
 use support::points::*;
 use voronoi_mesh::{
-    compute_with_report, validation::validate, ComputeOutput, EdgeMismatchOrigin, UnitVec3Like,
-    VoronoiConfig,
+    compute_with_report, validation::validate, ComputeOutput, UnitVec3Like, VoronoiConfig,
 };
 
 /// The defect site discovered in uniform 2M seed 1 (generator 1948042's
@@ -170,21 +167,10 @@ fn compute_strict(
 
 fn pair_set(out: &ComputeOutput) -> std::collections::BTreeSet<(u32, u32)> {
     out.report
-        .reconciliation_edge_records
+        .reconciliation_edge_pairs
         .iter()
-        .map(|&(a, b, _)| (a, b))
+        .copied()
         .collect()
-}
-
-fn origins(out: &ComputeOutput) -> Vec<EdgeMismatchOrigin> {
-    let mut v: Vec<_> = out
-        .report
-        .reconciliation_edge_records
-        .iter()
-        .map(|&(_, _, o)| o)
-        .collect();
-    v.sort();
-    v
 }
 
 /// Within-bin thirds-mismatch detection: the small fixture must produce
@@ -199,10 +185,9 @@ fn net_in_bin_detection_and_reconciliation() {
     let mut sets = Vec::new();
     for bins in [Some(6), None, Some(96)] {
         let out = compute_strict("in_bin_net", &fixture, bins);
-        let os = origins(&out);
         assert!(
-            os.contains(&EdgeMismatchOrigin::InBinThirdsMismatch),
-            "expected InBinThirdsMismatch at bins={bins:?}, got {os:?}"
+            out.report.assembly_edge_mismatch_count > 0,
+            "expected a live-dedup mismatch at bins={bins:?}"
         );
         sets.push((bins, pair_set(&out)));
     }
@@ -223,10 +208,9 @@ fn net_in_bin_detection_and_reconciliation() {
 fn net_in_bin_unconsumed_check() {
     let fixture = with_scaffold(&defect_window(), 40_000);
     let out = compute_strict("in_bin_unconsumed", &fixture, Some(12));
-    let os = origins(&out);
     assert!(
-        os.contains(&EdgeMismatchOrigin::InBinUnconsumedCheck),
-        "expected InBinUnconsumedCheck at scaffold 40k bins=12, got {os:?} \
+        out.report.assembly_edge_mismatch_count > 0,
+        "expected a live-dedup mismatch at scaffold 40k bins=12 \
          (layout may have moved; re-run probe_scaffold_sweep)"
     );
 }
@@ -241,10 +225,9 @@ fn net_in_bin_unconsumed_check() {
 fn net_cross_bin_single_sided() {
     let fixture = with_scaffold(&defect_window(), 280_000);
     let split = compute_strict("cross_single_split", &fixture, Some(48));
-    let os = origins(&split);
     assert!(
-        os.contains(&EdgeMismatchOrigin::CrossBinSingleSided),
-        "expected CrossBinSingleSided at scaffold 280k bins=48, got {os:?} \
+        split.report.assembly_edge_mismatch_count > 0,
+        "expected a live-dedup mismatch at scaffold 280k bins=48 \
          (bin layout may have moved; re-run probe_scaffold_sweep)"
     );
 }
@@ -265,19 +248,13 @@ fn net_cross_bin_single_sided() {
 #[test]
 fn fallback_f64_vertices_avoid_endpoint_key_mismatch() {
     let fixture = mega_points(100_000, 0.8, 11);
-    let out = compute_strict("endpoint_key_mismatch", &fixture, None);
-    let os = origins(&out);
-    assert!(
-        !os.contains(&EdgeMismatchOrigin::EndpointKeyMismatch),
-        "f64 fallback retained the former EndpointKeyMismatch: {os:?}"
-    );
-    // The scalar comparison backend does not reproduce the two SIMD-layout
-    // control mismatches, but still exercises the regression assertion above.
+    let _out = compute_strict("endpoint_key_mismatch", &fixture, None);
+    // The scalar comparison backend does not reproduce the SIMD-layout control
+    // mismatches; all regimes still exercise the strict-validity regression.
     #[cfg(not(feature = "simd_scalar"))]
     assert!(
-        os.contains(&EdgeMismatchOrigin::InBinThirdsMismatch)
-            && os.contains(&EdgeMismatchOrigin::InBinUnconsumedCheck),
-        "reconciliation-net control origins disappeared: {os:?}"
+        _out.report.assembly_edge_mismatch_count > 0,
+        "reconciliation-net control mismatches disappeared"
     );
 }
 
@@ -303,11 +280,11 @@ fn net_reconcile_backends_agree() {
         .unwrap_or_else(|e| panic!("{name} rebuild: {e:?}"));
 
         assert!(
-            !surgical.report.reconciliation_edge_records.is_empty(),
+            !surgical.report.reconciliation_edge_pairs.is_empty(),
             "{name}: fixture produced no defects, differential is vacuous"
         );
         assert_eq!(
-            surgical.report.reconciliation_edge_records, rebuild.report.reconciliation_edge_records,
+            surgical.report.reconciliation_edge_pairs, rebuild.report.reconciliation_edge_pairs,
             "{name}: backends saw different defects (detection precedes reconciliation; this \
              would mean nondeterminism upstream of the reconciliation backends)"
         );
@@ -361,18 +338,13 @@ fn probe_site_scan() {
         .expect("compute");
         let gens = out.diagram.iter_effective_generators().collect::<Vec<_>>();
         print!("{name}: ");
-        if out.report.reconciliation_edge_records.is_empty() {
+        if out.report.reconciliation_edge_pairs.is_empty() {
             println!("no defects");
         } else {
             println!();
-            for &(a, b, origin) in &out.report.reconciliation_edge_records {
+            for &(a, b) in &out.report.reconciliation_edge_pairs {
                 let g = gens[a as usize];
-                println!(
-                    "  ({a},{b},{origin:?}) site=({:.9},{:.9},{:.9})",
-                    g.x(),
-                    g.y(),
-                    g.z()
-                );
+                println!("  ({a},{b}) site=({:.9},{:.9},{:.9})", g.x(), g.y(), g.z());
             }
         }
     }
@@ -394,7 +366,7 @@ fn probe_defect_rate_at_scale() {
             Ok(out) => println!(
                 "{name:28} n={:8} defects={:?} strict_valid={}",
                 points.len(),
-                out.report.reconciliation_edge_records,
+                out.report.reconciliation_edge_pairs,
                 out.report.validation.is_strictly_valid()
             ),
             Err(err) => println!("{name:28} n={:8} ERROR: {err:?}", points.len()),
@@ -436,7 +408,7 @@ fn probe_defect_rate_adversarial() {
             Ok(out) => println!(
                 "{name:28} n={:8} defects={:?} strict_valid={}",
                 points.len(),
-                out.report.reconciliation_edge_records,
+                out.report.reconciliation_edge_pairs,
                 out.report.validation.is_strictly_valid()
             ),
             Err(err) => println!("{name:28} n={:8} ERROR: {err:?}", points.len()),
@@ -469,7 +441,7 @@ fn probe_window() {
             Ok(out) => println!(
                 "scaffold={scaffold_n:6}: n={} unresolved={:?} strict_valid={}",
                 fixture.len(),
-                out.report.reconciliation_edge_records,
+                out.report.reconciliation_edge_pairs,
                 out.report.validation.is_strictly_valid()
             ),
             Err(err) => println!("scaffold={scaffold_n:6}: ERROR: {err:?}"),
@@ -497,7 +469,7 @@ fn probe_scaffold_sweep() {
             match out {
                 Ok(out) => println!(
                     "scaffold={scaffold_n:7} bins={bins:2}: unresolved={:?} strict_valid={}",
-                    out.report.reconciliation_edge_records,
+                    out.report.reconciliation_edge_pairs,
                     out.report.validation.is_strictly_valid()
                 ),
                 Err(err) => println!("scaffold={scaffold_n:7} bins={bins:2}: ERROR: {err:?}"),

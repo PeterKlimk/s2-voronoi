@@ -168,11 +168,6 @@ pub use embedding::{
     SphereEmbedding, SphereEmbeddingError, SphereProjectionError, WorldVec3Like,
 };
 pub use error::VoronoiError;
-/// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
-/// part of the supported API surface (taxonomy may change in patch releases).
-#[doc(hidden)]
-pub use live_dedup::EdgeMismatchOrigin;
-
 pub use locate::{IndexedSphereQueryError, SphereLocator, SphereQueryError};
 pub use types::{SpherePoint, SpherePointError, UnitVec3Like, SPHERE_POINT_MAX_NORM_SQUARED_ERROR};
 
@@ -378,17 +373,13 @@ pub struct ComputeReport {
     /// rebuild. Indices correspond to [`SphericalVoronoi::iter_effective_cells`].
     #[doc(hidden)]
     pub residual_reconciliation_pairs: Vec<(u32, u32)>,
-    /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
-    /// patch releases): unresolved shared-edge mismatches handed to
-    /// post-assembly reconciliation, as dense effective-generator pairs plus
-    /// detection origins. Indices correspond to
-    /// [`SphericalVoronoi::iter_effective_cells`]. It also contains
-    /// `PostReconciliationUnpaired` records
-    /// when [`ComputeReport::residual_unpaired_edges`] is non-empty. Tests use
-    /// this to prove defect-forcing inputs exercise each detection path (see
-    /// `tests/edge_reconciliation.rs`).
+    /// EXPERIMENTAL DIAGNOSTIC: unresolved shared-edge generator pairs handed
+    /// to post-assembly reconciliation. Indices correspond to
+    /// [`SphericalVoronoi::iter_effective_cells`]. This contains synthesized
+    /// final residuals as well as the records counted by
+    /// [`ComputeReport::assembly_edge_mismatch_count`].
     #[doc(hidden)]
-    pub reconciliation_edge_records: Vec<(u32, u32, EdgeMismatchOrigin)>,
+    pub reconciliation_edge_pairs: Vec<(u32, u32)>,
 }
 
 impl ComputeReport {

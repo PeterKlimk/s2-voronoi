@@ -39,7 +39,7 @@ struct PipelineState {
     effective_input: EffectiveInput,
     preprocess_report: PreprocessReport,
     geometry: EffectiveGeometry,
-    edge_mismatches: Vec<live_dedup::EdgeMismatch>,
+    edge_mismatches: Vec<live_dedup::EdgeRecord>,
     residual_unpaired: Vec<(u32, u32)>,
     local_rebuild_seed_pairs: Vec<(u32, u32)>,
     local_rebuild: LocalRebuildOutcome,
@@ -781,9 +781,8 @@ fn compute_voronoi_knn_clipping_report_core(
     };
     if !local_rebuild_accepted {
         for &(a, b) in &state.residual_unpaired {
-            state.edge_mismatches.push(live_dedup::EdgeMismatch {
+            state.edge_mismatches.push(live_dedup::EdgeRecord {
                 key: live_dedup::pack_edge(a, b),
-                origin: live_dedup::EdgeMismatchOrigin::PostReconciliationUnpaired,
             });
         }
     }
@@ -822,12 +821,12 @@ fn compute_voronoi_knn_clipping_report_core(
                 output_resolution: state.output_resolution,
                 residual_unpaired_edges,
                 residual_reconciliation_pairs,
-                reconciliation_edge_records: state
+                reconciliation_edge_pairs: state
                     .edge_mismatches
                     .iter()
-                    .map(|m| {
-                        let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
-                        (a.min(b), a.max(b), m.origin)
+                    .map(|record| {
+                        let (a, b) = edge_reconcile::unpack_edge(record.key.as_u64());
+                        (a.min(b), a.max(b))
                     })
                     .collect(),
             },
@@ -1698,39 +1697,21 @@ fn assemble_shards(
 fn reconcile_edges(
     geometry: &mut EffectiveGeometry,
     vertex_keys: &live_dedup::ShardedVertexKeys,
-    edge_mismatches: &[live_dedup::EdgeMismatch],
+    edge_mismatches: &[live_dedup::EdgeRecord],
     tb: &mut TimingBuilder,
 ) -> Result<edge_reconcile::ReconcileResult, crate::VoronoiError> {
-    // Snapshot all reconciliation diagnostics/oracles once, but only after a
-    // mismatch exists. `ComputeReport` already records that a zero-record case
-    // was clean, so that path remains free of environment lookups.
+    // Snapshot reconciliation oracle choices once, but only after a mismatch
+    // exists. A clean computation remains free of environment lookups.
     let reconcile_options = if edge_mismatches.is_empty() {
         edge_reconcile::ReconcileOptions::default()
     } else {
-        let options = edge_reconcile::ReconcileOptions::read_from_env();
-        if options.emit_telemetry() {
-            edge_reconcile::emit_primary_reconcile_telemetry(
-                edge_mismatches,
-                geometry.vertices.as_slice(),
-                &geometry.cells,
-                &geometry.cell_indices,
-                edge_reconcile::VertexKeys::Sharded(vertex_keys),
-                crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-                options,
-            );
-        }
-        options
+        edge_reconcile::ReconcileOptions::read_from_env()
     };
-
-    let reconciliation_edge_storage: Vec<live_dedup::EdgeRecord> = edge_mismatches
-        .iter()
-        .map(|b| live_dedup::EdgeRecord { key: b.key })
-        .collect();
 
     let t = Timer::start();
     // The sphere has no boundary: every interior edge must pair.
     let reconcile_result = edge_reconcile::reconcile_edge_mismatches(
-        &reconciliation_edge_storage,
+        edge_mismatches,
         geometry.vertices.as_slice(),
         &mut geometry.cells,
         &mut geometry.cell_indices,

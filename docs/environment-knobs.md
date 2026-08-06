@@ -2,7 +2,7 @@
 
 **Status:** authoritative inventory; QUAL-001H completed 2026-07-18
 
-**Audited:** 2026-07-19
+**Audited:** 2026-08-05
 
 This document owns the environment-variable inventory read by compiled library, tool, campaign,
 and test code. Shell-only orchestration controls are documented in each script's header or
@@ -26,9 +26,7 @@ mutation.
 | `VORONOI_MESH_GRID_DENSITY` | benchmark tuning | `policy::knn_grid_target_density`, first use via `OnceLock` | Parsed `f64` at least 1; intended for grid-density sweeps, not per-computation mutation. |
 | `VORONOI_MESH_VERIFY` | supported verification | `validation::verify_enabled`, ordinary compute return gate | Exact value `1` enables the fast verifier with an O(E) strict-validation fallback. |
 | `VORONOI_MESH_TIMING_KV` | instrumentation | `timing::real::PhaseTimings::report` | Presence emits machine-readable timing output when the `timing` feature is enabled. |
-| `VORONOI_MESH_RECONCILE_TELEMETRY` | correctness diagnostic | defect-scoped `ReconcileOptions` snapshot | Presence repeats a read-only primary-round analysis and emits `RECONCILE_KV`. Read once with the other reconciliation options only after mismatch records exist. |
 | `VORONOI_MESH_RESOLUTION_KV` | correctness diagnostic | terminal output-resolution pass | Presence emits exact-zero resolution statistics. |
-| `VORONOI_MESH_EDGE_MISMATCH_ORIGINS` | correctness diagnostic | live assembly, mismatch-record path only | Presence prints mismatch-origin counts. Clean assemblies return before the lookup; this replaces the stale internal name `VORONOI_MESH_UNPAIRED_ORIGINS`. |
 | `VORONOI_MESH_VERIFY_TRACE` | correctness diagnostic | verification gate, only after fast verification rejects | Exact value `1` prints the fast-verifier fallback reason. |
 | `VORONOI_MESH_RECONCILE_REBUILD` | differential oracle | defect-scoped `ReconcileOptions` snapshot | Exact value `1` selects the whole-buffer rebuild oracle instead of production in-place application. Read once only after mismatch records exist. |
 | `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` | differential safety valve | defect-scoped `ReconcileOptions` snapshot | Exact value `1` substitutes the O(V) global duplicate scan for localized traversal. Read once only after mismatch records exist. |
@@ -37,6 +35,12 @@ mutation.
 `VORONOI_MESH_PLANE_GRID_DENSITY` had no reader or backend in this repository. Its stale
 performance-documentation entry was removed by QUAL-001H; reintroducing it requires a current
 planar backend rather than a compatibility-only environment name.
+
+`VORONOI_MESH_RECONCILE_TELEMETRY`, `VORONOI_MESH_EDGE_MISMATCH_ORIGINS`, and their
+duplicated read-only analyses were retired after the reconciliation policy, bounded-component
+invariants, and mismatch-record emission were pinned by direct tests. The production reconciliation
+path, mismatch counts and generator pairs, rebuild oracle, and global duplicate-scan safety valve
+remain available.
 
 ## Campaign, benchmark, and manual-probe inputs
 

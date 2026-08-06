@@ -139,7 +139,7 @@ fn cubed_sphere_scaling_probe() {
         eprintln!(
             "k={k} n={}: defects={} residual_edges={post} valid={} deg[d3={d3} d4+={d4}]",
             pts.len(),
-            out.report.reconciliation_edge_records.len(),
+            out.report.reconciliation_edge_pairs.len(),
             v.is_strictly_valid(),
         );
     }

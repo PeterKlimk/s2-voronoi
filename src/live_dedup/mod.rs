@@ -28,8 +28,7 @@ pub(crate) use emit::{checked_local_id, checked_u32, emit_cell_output, EdgeScrat
 pub(crate) use packed::pack_edge;
 pub(crate) use shard::ShardState;
 pub(crate) use types::BinId;
-pub use types::EdgeMismatchOrigin;
-pub(crate) use types::{EdgeCheck, EdgeKey, EdgeMismatch, EdgeRecord};
+pub(crate) use types::{EdgeCheck, EdgeKey, EdgeRecord};
 
 /// Per-shard vertex keys kept un-concatenated.
 ///
@@ -113,7 +112,7 @@ pub(crate) struct AssemblyResult {
     /// Assembly first tries to reconcile cross-bin edge checks and patch deferred vertex slots.
     /// Entries that remain here feed the narrow post-pass reconciliation in
     /// `edge_reconcile.rs`; they are not a generic record of arbitrary topology failures.
-    pub edge_mismatches: Vec<EdgeMismatch>,
+    pub edge_mismatches: Vec<EdgeRecord>,
     /// Per-cell storage (one per generator).
     pub cells: Vec<VoronoiCell>,
     /// Flattened vertex indices for all cells.

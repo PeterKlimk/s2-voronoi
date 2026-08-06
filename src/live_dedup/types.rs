@@ -86,77 +86,12 @@ impl From<EdgeKey> for u64 {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
+/// An unresolved undirected generator edge handed from live assembly to the
+/// narrow post-pass reconciliation stage.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EdgeRecord {
     pub(crate) key: EdgeKey,
-}
-
-/// Which detection path recorded an unresolved shared-edge mismatch.
-///
-/// EXPERIMENTAL DIAGNOSTIC — not part of the supported API surface. The
-/// variants name sharding/reconciliation implementation details (within-bin
-/// vs cross-bin, slot conflicts) and the taxonomy changes as the engine
-/// evolves, including in patch releases. It exists so tests can prove each
-/// detection path is exercised and so bug reports can carry precise origins;
-/// do not build application logic on specific variants. The stable surface
-/// is `ComputeReport`'s coarse summary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[non_exhaustive]
-pub enum EdgeMismatchOrigin {
-    /// Within-bin: the later cell has an edge to an earlier same-bin
-    /// neighbor, but no incoming edge check matched (the earlier cell
-    /// concluded the edge does not exist).
-    InBinMissingCheck,
-    /// Within-bin: an incoming edge check matched the edge, but the endpoint
-    /// "third" generators do not fully reconcile (the cells disagree on
-    /// endpoint identity).
-    InBinThirdsMismatch,
-    /// Within-bin: two edges of the later cell consumed the same incoming
-    /// check from one earlier neighbor. A normal shared generator pair has
-    /// exactly one edge per side; accepting both would silently lose an edge
-    /// multiplicity defect when both endpoint comparisons happen to match.
-    InBinDuplicateSide,
-    /// Within-bin: an incoming edge check was never matched by any of the
-    /// later cell's edges (the later cell concluded the edge does not exist).
-    InBinUnconsumedCheck,
-    /// Cross-bin: both overflow sides matched by key, but the endpoint
-    /// "third" generators do not fully reconcile.
-    CrossBinThirdsMismatch,
-    /// Cross-bin: only one side emitted an overflow record for this edge key.
-    CrossBinSingleSided,
-    /// Cross-bin: an equal-key overflow run contains duplicate records from at
-    /// least one side.
-    CrossBinDuplicateSide,
-    /// Cross-bin: endpoint patching tried to write two different concrete
-    /// vertex references into the same cell slot — the signature of
-    /// duplicate same-key vertices (an upstream index-propagation failure)
-    /// reaching a cross-bin cell through two of its edges. The thirds may
-    /// fully agree, so this is detectable only at the slot level.
-    CrossBinSlotConflict,
-    /// An edge endpoint's vertex key does not name both edge endpoints — a
-    /// malformed triple attribution from a near-degenerate clip. Natural
-    /// trigger: the fallback extract's split-plane corner on dense
-    /// near-cocircular (`mega`) inputs, where position dedup collapses the
-    /// split micro-edge and strands the split plane in the surviving
-    /// vertex's key. Recorded at the site that computes the endpoint
-    /// "third", so detection is deterministic instead of relying on a
-    /// garbage third failing to match downstream.
-    EndpointKeyMismatch,
-    /// Post-reconciliation output-invariant backstop: an interior edge used by
-    /// exactly one cell survived reconciliation. Reported, not force-fixed
-    /// — the backstop's eps-bounded pass refuses to merge distant vertices
-    /// on synthesized evidence.
-    PostReconciliationUnpaired,
-}
-
-/// These are produced by edge-check matching when the two sides of an undirected edge cannot be
-/// reconciled during live dedup. They are the only inputs to the narrow post-pass
-/// reconciliation in `edge_reconcile.rs`.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct EdgeMismatch {
-    pub(crate) key: EdgeKey,
-    pub(crate) origin: EdgeMismatchOrigin,
 }
 
 #[derive(Clone, Copy)]

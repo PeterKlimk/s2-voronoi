@@ -437,14 +437,15 @@ tasks and are not duplicated here.
 - **QUAL-001H local-rebuild options result:** debug output and the feature-only global-Delaunay
   selector are snapshotted once per actual rebuild attempt and passed explicitly through the grow
   loop. Disabled and no-trigger computations return before either lookup.
-- **QUAL-001H reconciliation options result:** telemetry, apply-backend selection, and the global
-  duplicate-scan fallback are snapshotted together only after mismatch records exist, then passed
-  explicitly through telemetry and reconciliation rounds. Clean computations perform no
-  reconciliation environment lookup.
-- **QUAL-001H singleton result:** the stale internal `VORONOI_MESH_UNPAIRED_ORIGINS` name became
-  `VORONOI_MESH_EDGE_MISMATCH_ORIGINS`, and its lookup/output now occurs only when assembly has a
-  mismatch. Output-resolution telemetry was retained unchanged because it already returns before
-  its lookup when no exact-zero edge exists. This closes QUAL-001H.
+- **QUAL-001H reconciliation options result:** apply-backend selection and the global duplicate-scan
+  fallback are snapshotted together only after mismatch records exist. The read-only reconciliation
+  telemetry added for the original audit was retired after its invariants were pinned directly.
+  Clean computations perform no reconciliation environment lookup.
+- **QUAL-001H singleton result:** the temporary mismatch-origin taxonomy and environment diagnostic
+  were retired with the reconciliation telemetry. Assembly now carries compact edge keys directly
+  into reconciliation while the report retains mismatch counts and generator pairs. Output-resolution
+  telemetry remains because it reports the terminal exact-zero policy rather than duplicating a
+  tested reconciliation pass. This closes QUAL-001H.
 - **QUAL-001E policy result:** the raw dense-band `1e-3` gather inflation is now the named,
   dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION` in `policy.rs`. Its optimized benchmark
   artifact is byte-identical to the parent, and all required feature/test matrices pass.
@@ -811,6 +812,24 @@ tasks and are not duplicated here.
 4. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
+
+### QUAL-002 — Retire reconciliation audit telemetry
+
+- **Priority:** P2
+- **Status:** Completed 2026-08-05
+- **Result:** removed the duplicated read-only reconciliation simulation, mismatch-origin taxonomy,
+  and their two environment diagnostics. Assembly now carries one transparent eight-byte edge-key
+  record directly into reconciliation, eliminating the defect-path conversion allocation while
+  retaining mismatch counts, generator-pair evidence, strict validation, the rebuild differential,
+  and the global duplicate-scan safety valve.
+- **Reduction:** 808 net source/documentation lines and about 35.6 KiB portable / 37.9 KiB native
+  text from comparable timing-enabled benchmark binaries.
+- **Evidence:** release reconciliation, local-rebuild, output-resolution, correctness, and backend
+  suites passed, as did checked detector tests. Seven pinned native counter pairs were favorable on
+  clean 500k Fibonacci/uniform controls (instructions `0.99774`/`0.99201`, cycles
+  `0.99397`/`0.97019`). The active 100k cubed fixture retained 3,620 mismatch records and was
+  effectively cycle-neutral; after its first warm pair, instructions were neutral while branches
+  fell about one percent. Raw counters are under `/tmp/s2-diagnostic-retire/`.
 
 ### WORK-001 — Output-resolution certificate soak and component hardening
 

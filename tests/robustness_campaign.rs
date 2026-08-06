@@ -1,8 +1,7 @@
 #![cfg(feature = "manual_probes")]
 //! Robustness evidence campaign (ignored by default): drive many seeds,
 //! sizes, and distributions through `compute_with_report` and record, per
-//! input, the defect count, the detection-origin histogram (incl. the
-//! post-reconciliation output-invariant backstop), and strict validity.
+//! input, the defect count, reconciliation residuals, and strict validity.
 //!
 //! Motivation: the residual-defect story must not rest on the handful of
 //! historically known sites. Every new natural input either reaches
@@ -32,12 +31,9 @@
 
 mod support;
 
-use std::collections::BTreeMap;
-
 use support::points::*;
 use voronoi_mesh::{
-    compute_with, compute_with_report, validation::validate, EdgeMismatchOrigin, LocalRebuildMode,
-    VoronoiConfig,
+    compute_with, compute_with_report, validation::validate, LocalRebuildMode, VoronoiConfig,
 };
 
 /// Process peak RSS (high-water mark) in MB, from /proc/self/status.
@@ -116,43 +112,29 @@ fn campaign_case() {
 
     match compute_with_report(&points, VoronoiConfig::default()) {
         Ok(out) => {
-            let mut origins: BTreeMap<EdgeMismatchOrigin, usize> = BTreeMap::new();
-            for &(_, _, origin) in &out.report.reconciliation_edge_records {
-                *origins.entry(origin).or_default() += 1;
-            }
             let valid = out.report.validation.is_strictly_valid();
-            let defects = out.report.reconciliation_edge_records.len();
+            let defects = out.report.reconciliation_edge_pairs.len();
             let reconciliation_residual = out.report.residual_reconciliation_pairs.len();
             let residual_edges = out.report.residual_unpaired_edges.len() + reconciliation_residual;
             let local_rebuild_attempted = out.report.local_rebuild.attempted();
             let local_rebuild_accepted = out.report.local_rebuild.accepted();
-            let origins_str = if origins.is_empty() {
-                "none".to_string()
-            } else {
-                origins
-                    .iter()
-                    .map(|(o, c)| format!("{o:?}:{c}"))
-                    .collect::<Vec<_>>()
-                    .join("|")
-            };
             println!(
                 "CASERESULT dist={dist} n={actual_n} seed={seed} param={param} \
                  result=ok defects={defects} residual_edges={residual_edges} reconciliation_residual={reconciliation_residual} valid={valid} \
                  local_rebuild_attempted={local_rebuild_attempted} local_rebuild_accepted={local_rebuild_accepted} \
-                 peak_mb={} origins={origins_str}",
+                 peak_mb={}",
                 peak_rss_mb()
             );
             assert!(
                 valid && residual_edges == 0,
                 "{dist} n={actual_n} seed={seed}: default pipeline did not produce a clean, \
-                 strictly valid diagram (valid={valid}, residual_edges={residual_edges}, \
-                 origins={origins_str})"
+                 strictly valid diagram (valid={valid}, residual_edges={residual_edges})"
             );
         }
         Err(e) => {
             println!(
                 "CASERESULT dist={dist} n={actual_n} seed={seed} param={param} \
-                 result=err defects=- valid=- peak_mb={} origins=err:{e:?}",
+                 result=err defects=- valid=- peak_mb={} error={e:?}",
                 peak_rss_mb()
             );
             panic!("{dist} n={actual_n} seed={seed}: supported campaign case failed: {e}");
@@ -212,7 +194,7 @@ fn diag_memory_accumulation() {
     for i in 0..6 {
         let pts = random_sphere_points(1_000_000, (i + 1) as u64);
         let out = compute_with_report(&pts, VoronoiConfig::default()).expect("compute");
-        let defects = out.report.reconciliation_edge_records.len();
+        let defects = out.report.reconciliation_edge_pairs.len();
         drop(out);
         drop(pts);
         println!(
@@ -232,7 +214,7 @@ fn diag_single_build_peak() {
     let n: usize = env_parse("VORONOI_MESH_CASE_N", 1_000_000usize);
     let pts = random_sphere_points(n, 1);
     let out = compute_with_report(&pts, VoronoiConfig::default()).expect("compute");
-    let defects = out.report.reconciliation_edge_records.len();
+    let defects = out.report.reconciliation_edge_pairs.len();
     let valid = out.report.validation.is_strictly_valid();
     println!(
         "PEAKPROBE n={n} peak_rss={} MB defects={defects} valid={valid}",
