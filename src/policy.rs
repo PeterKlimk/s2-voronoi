@@ -180,7 +180,7 @@ impl PackedNeighborPolicy {
     }
 
     #[inline]
-    pub(crate) fn after_occupancy_rebuild(mut self) -> Self {
+    pub(crate) fn with_concentrated_mode(mut self) -> Self {
         self.hi_budget = CONCENTRATED_PACKED_HI_BUDGET;
         self.hi_min_queries = CONCENTRATED_PACKED_HI_MIN_QUERIES;
         self
@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(policy.hi_budget(), PACKED_HI_BUDGET);
         assert_eq!(policy.hi_min_queries(), usize::MAX);
 
-        let concentrated = policy.after_occupancy_rebuild();
+        let concentrated = policy.with_concentrated_mode();
         assert_eq!(concentrated.hi_budget(), CONCENTRATED_PACKED_HI_BUDGET);
         assert_eq!(
             concentrated.hi_min_queries(),

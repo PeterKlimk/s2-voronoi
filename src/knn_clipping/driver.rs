@@ -168,12 +168,12 @@ pub(crate) fn build_cells_sharded_live_dedup(
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
     positive_chord_threshold: Option<f32>,
-    occupancy_rebuilt: bool,
+    concentrated_mode: bool,
     workspace: Option<&BuildWorkspace>,
 ) -> Result<ShardedCellsData, BuildCellsError> {
     let mut policy = PackedNeighborPolicy::for_point_count(points.len());
-    if occupancy_rebuilt {
-        policy = policy.after_occupancy_rebuild();
+    if concentrated_mode {
+        policy = policy.with_concentrated_mode();
     }
     let positive_resolution_hint_x_threshold =
         positive_chord_threshold.map(|threshold| resolution_hint_x_threshold(Some(threshold)));

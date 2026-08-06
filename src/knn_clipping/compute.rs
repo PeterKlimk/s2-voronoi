@@ -354,7 +354,7 @@ fn run_core_pipeline(
         effective_input,
         report: preprocess_report,
         mut grid,
-        occupancy_rebuilt,
+        concentrated_mode,
     } = prepare_points_and_grid(&points, preprocess_mode, workspace, &mut tb)?;
 
     let effective_points_ref = effective_input.points(&points);
@@ -362,7 +362,7 @@ fn run_core_pipeline(
     let point_cell_storage = grid.take_point_cells();
     let construction_policy = CellConstructionPolicy {
         positive_chord_threshold,
-        occupancy_rebuilt,
+        concentrated_mode,
     };
 
     let sharded = construct_cell_shards(
@@ -1457,7 +1457,7 @@ struct PreparedPointsAndGrid {
     effective_input: EffectiveInput,
     report: PreprocessReport,
     grid: CubeMapGrid,
-    occupancy_rebuilt: bool,
+    concentrated_mode: bool,
 }
 
 fn prepare_points_and_grid(
@@ -1472,7 +1472,7 @@ fn prepare_points_and_grid(
         PreprocessMode::MergeWithin(threshold) => Some(threshold),
     };
 
-    let (mut grid, mut dense_index_eligible) =
+    let (mut grid, mut concentrated_mode) =
         build_query_grid(points, tb, threshold.is_some(), workspace);
 
     let t = Timer::start();
@@ -1511,7 +1511,7 @@ fn prepare_points_and_grid(
                 }
             })?;
             if result.num_merged > 0 {
-                (grid, dense_index_eligible) =
+                (grid, concentrated_mode) =
                     build_query_grid(&result.effective_points, tb, true, workspace);
                 effective_input = EffectiveInput::Merged(result);
             }
@@ -1524,7 +1524,7 @@ fn prepare_points_and_grid(
     // it, and preprocessing may compact or rebuild it. Materialize the
     // optional side index once, on the retained slot/cell layout, and only in
     // the deep-concentration regime where the packed band path is enabled.
-    if dense_index_eligible {
+    if concentrated_mode {
         let t_dense = Timer::start();
         grid.build_dense_index();
         tb.add_knn_build(t_dense.elapsed());
@@ -1541,7 +1541,7 @@ fn prepare_points_and_grid(
         effective_input,
         report,
         grid,
-        occupancy_rebuilt: dense_index_eligible,
+        concentrated_mode,
     })
 }
 
@@ -1654,7 +1654,7 @@ fn build_query_grid(
 #[derive(Clone, Copy)]
 struct CellConstructionPolicy {
     positive_chord_threshold: Option<f32>,
-    occupancy_rebuilt: bool,
+    concentrated_mode: bool,
 }
 
 fn construct_cell_shards(
@@ -1672,7 +1672,7 @@ fn construct_cell_shards(
         grid,
         point_cell_storage,
         policy.positive_chord_threshold,
-        policy.occupancy_rebuilt,
+        policy.concentrated_mode,
         workspace,
     )
     .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;

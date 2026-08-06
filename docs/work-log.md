@@ -867,6 +867,18 @@ tasks and are not duplicated here.
   maximum-resolution grid made ordinary Fibonacci/uniform roughly 6.9x slower and great-circle
   about 5.4x slower. The trigger, one rebuild, dense band, and concentrated prefix form one
   justified adaptive policy rather than removable micro-tuning.
+- **Accepted the semantic concentrated-mode boundary:** the cross-phase flag and packed-policy
+  transition now name the behavior they select rather than the earlier occupancy-rebuild event.
+  Stronger enum/newtype wrappers, threading the complete two-word packed policy, and combining the
+  two occupancy-stat scans were also tested and restored: they removed no meaningful control flow
+  and raised median 500k Fibonacci/uniform retired instructions by roughly 0.1--0.3%. The retained
+  naming-only change has byte-identical native benchmark `.text` to `3587f1c`; raw counter evidence
+  for the rejected forms is under `/tmp/s2-exp-grid-policy/`.
+- **Rejected an output-resolution phase wrapper:** a `PipelineResolutionOutcome` helper made exact
+  and positive resolution ownership more explicit but merely moved the existing branch tree. Both
+  the ordinary and forced-inline forms raised median 500k Fibonacci/uniform retired instructions by
+  about 0.2--0.4%, so the existing `ResolutionView`-based orchestration remains. Counter artifacts
+  are under `/tmp/s2-exp-resolution-phase/`.
 - **Rejected cold sharing and Tail networks:** one shared directed-link-cycle predicate removed
   duplicated cold logic but saved only 39 net lines and repeatedly added about 1.45% uniform cycles
   despite neutral/favorable retired instructions, so it was restored. Making Tail use whole-network
