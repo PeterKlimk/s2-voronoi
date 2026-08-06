@@ -310,142 +310,13 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
             if i == exit_idx {
                 break;
             }
-            i = (i + 1) % N;
-        }
-
-        let exit_u = fp::mul_add_unfused_f64(
-            t_exit,
-            *us.add(exit_next) - *us.add(exit_idx),
-            *us.add(exit_idx),
-        );
-        let exit_v = fp::mul_add_unfused_f64(
-            t_exit,
-            *vs.add(exit_next) - *vs.add(exit_idx),
-            *vs.add(exit_idx),
-        );
-        let exit_ep = *eps.add(exit_idx);
-        push_idx!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
-    }
-
-    out.len = out_len;
-    out.max_r2 = max_r2;
-    out.has_bounding_ref = if TRACK_BOUNDING { has_bounding } else { false };
-    ClipResult::Changed
-}
-
-/// Small-N clipper using modulo-free iteration (for N=3,5,6,7 where `% N` is expensive).
-#[inline]
-#[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
-pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
-    poly: &PolyBuffer,
-    hp: &HalfPlane,
-    out: &mut PolyBuffer,
-) -> ClipResult {
-    debug_assert_eq!(poly.len, N);
-    debug_assert!(N >= 3 && N <= 8);
-
-    let us = poly.us.as_ptr();
-    let vs = poly.vs.as_ptr();
-    let vps = poly.vertex_planes.as_ptr();
-    let eps = poly.edge_planes.as_ptr();
-
-    // For N <= 4 (triangles/quads) only the low four lanes are live, so one
-    // f64x4 eval suffices; N in 5..=8 needs all eight. `N` is a const generic,
-    // so this branch resolves at compile time. Lanes past N read
-    // stale-but-finite data and are masked down to the live N bits; lane math
-    // is bit-identical to the scalar signed_dist formula.
-    let full: u32 = (1u32 << N) - 1;
-    let (dists, inside_bits) = eval_small_dists::<N>(poly, hp);
-    let dists = dists.as_slice();
-    let mask = inside_bits & full;
-    if mask == 0 {
-        out.len = 0;
-        out.max_r2 = 0.0;
-        out.has_bounding_ref = false;
-        return ClipResult::Changed;
-    }
-
-    if mask == full {
-        return ClipResult::Unchanged;
-    }
-
-    // First entry (prev outside -> inside) and first exit (prev inside ->
-    // outside) transitions of the cyclic mask, branchlessly: rot[i] holds
-    // inside[prev(i)]. A mixed cyclic mask always contains both.
-    let rot = ((mask << 1) | (mask >> (N - 1))) & full;
-    let entry_bits = mask & !rot;
-    let exit_bits = rot & !mask;
-    debug_assert!(entry_bits != 0 && exit_bits != 0);
-    let entry_next = entry_bits.trailing_zeros() as usize;
-    let exit_next = exit_bits.trailing_zeros() as usize;
-    let entry_idx = if entry_next == 0 {
-        N - 1
-    } else {
-        entry_next - 1
-    };
-    let exit_idx = if exit_next == 0 { N - 1 } else { exit_next - 1 };
-
-    #[inline(always)]
-    fn r2_of(u: f64, v: f64) -> f64 {
-        fp::mul_add_unfused_f64(u, u, v * v)
-    }
-
-    let mut out_len: usize = 0;
-    let mut max_r2 = 0.0f64;
-    let mut has_bounding = false;
-
-    macro_rules! push_idx {
-        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
-            let u = $u;
-            let v = $v;
-            let vp = $vp;
-            let ep = $ep;
-            *out.us.get_unchecked_mut(out_len) = u;
-            *out.vs.get_unchecked_mut(out_len) = v;
-            *out.vertex_planes.get_unchecked_mut(out_len) = vp;
-            *out.edge_planes.get_unchecked_mut(out_len) = ep;
-            out_len += 1;
-            let r2 = r2_of(u, v);
-            if r2 > max_r2 {
-                max_r2 = r2;
-            }
-            if TRACK_BOUNDING {
-                has_bounding |= vp.0 == super::super::types::INVALID_PLANE_ID;
-            }
-        }};
-    }
-
-    unsafe {
-        // Read all four distances first, then issue both divisions for ILP
-        let d_entry = *dists.get_unchecked(entry_idx);
-        let d_entry_next = *dists.get_unchecked(entry_next);
-        let d_exit = *dists.get_unchecked(exit_idx);
-        let d_exit_next = *dists.get_unchecked(exit_next);
-
-        let (t_entry, t_exit) = super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next);
-
-        let entry_u = fp::mul_add_unfused_f64(
-            t_entry,
-            *us.add(entry_next) - *us.add(entry_idx),
-            *us.add(entry_idx),
-        );
-        let entry_v = fp::mul_add_unfused_f64(
-            t_entry,
-            *vs.add(entry_next) - *vs.add(entry_idx),
-            *vs.add(entry_idx),
-        );
-        let entry_ep = *eps.add(entry_idx);
-        push_idx!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
-
-        let mut i = entry_next;
-        loop {
-            push_idx!(*us.add(i), *vs.add(i), *vps.add(i), *eps.add(i));
-            if i == exit_idx {
-                break;
-            }
-            i += 1;
-            if i == N {
-                i = 0;
+            if N.is_power_of_two() {
+                i = (i + 1) % N;
+            } else {
+                i += 1;
+                if i == N {
+                    i = 0;
+                }
             }
         }
 
@@ -468,5 +339,6 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     out.has_bounding_ref = if TRACK_BOUNDING { has_bounding } else { false };
     ClipResult::Changed
 }
+
 use super::super::types::{ClipResult, HalfPlane, PolyBuffer};
 use crate::fp;

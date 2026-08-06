@@ -5,7 +5,7 @@ mod output;
 mod small;
 
 use bitmask::clip_bitmask;
-use small::{clip_small_ptr, clip_small_ptr_d};
+use small::clip_small_ptr;
 
 /// Intersection parameters for two strict-boundary transitions.
 #[inline(always)]
@@ -30,9 +30,9 @@ fn dispatch_clip(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> Cli
     match n {
         3 => {
             if has_bounding_ref {
-                clip_small_ptr_d::<3, true>(poly, hp, out)
+                clip_small_ptr::<3, true>(poly, hp, out)
             } else {
-                clip_small_ptr_d::<3, false>(poly, hp, out)
+                clip_small_ptr::<3, false>(poly, hp, out)
             }
         }
         4 => {
@@ -44,23 +44,23 @@ fn dispatch_clip(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> Cli
         }
         5 => {
             if has_bounding_ref {
-                clip_small_ptr_d::<5, true>(poly, hp, out)
+                clip_small_ptr::<5, true>(poly, hp, out)
             } else {
-                clip_small_ptr_d::<5, false>(poly, hp, out)
+                clip_small_ptr::<5, false>(poly, hp, out)
             }
         }
         6 => {
             if has_bounding_ref {
-                clip_small_ptr_d::<6, true>(poly, hp, out)
+                clip_small_ptr::<6, true>(poly, hp, out)
             } else {
-                clip_small_ptr_d::<6, false>(poly, hp, out)
+                clip_small_ptr::<6, false>(poly, hp, out)
             }
         }
         7 => {
             if has_bounding_ref {
-                clip_small_ptr_d::<7, true>(poly, hp, out)
+                clip_small_ptr::<7, true>(poly, hp, out)
             } else {
-                clip_small_ptr_d::<7, false>(poly, hp, out)
+                clip_small_ptr::<7, false>(poly, hp, out)
             }
         }
         8 => {
