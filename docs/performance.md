@@ -1373,6 +1373,12 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Removing dense edge-queue-table bounds checks after compact handles were accepted reduced another
+  0.11% instructions and 0.51--0.54% branches in every pinned and all-core pair. Branch misses rose
+  slightly, however, and seven 4M pairs were wall-time neutral/adverse (only 2/7 favorable; geometric
+  mean +0.27%). Pinned cycles were neutral. Keep the safe indexing: LLVM already contains most of the
+  proof, and the residual structural saving does not justify converting a handle bug into UB.
+
 - Publishing the accepted reserved cell-index span only once after the cell loop was tested in two
   forms. Enumerating fixed output offsets removed 0.17--0.28% instructions but added branches and
   branch misses, regressing five-to-seven-pair native 4M cycles 2.18% and wall time 2.72%. A pointer
