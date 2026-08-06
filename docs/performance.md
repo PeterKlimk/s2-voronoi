@@ -1859,7 +1859,12 @@ Do not broadly retry these without a materially different design or workload:
   single and remainder branches were empty 74.48% and 82.51%. Across 58.45M individual masks,
   76.59% were empty and a nonempty mask emitted only 1.97 keys on average. Fibonacci and clustered
   controls had even higher combined-empty rates (77--87%). Retain the empty fast exit rather than
-  predicating dot extraction and publication.
+  predicating dot extraction and publication. Correlation across queries made 374,913 of 1.65M
+  candidate blocks wholly empty (22.7%, covering 9.15M query-block visits), but an exact-form
+  conservative group cap using the normalized query centroid, maximum query radius, minimum
+  threshold, candidate norms, and an f32 roundoff pad certified none of them. The empty outcomes
+  depend on each query's coupled direction and threshold; there is no useful whole-group skip behind
+  the hot branch, consistent with the earlier failed ring-cell cap pruning.
 
   Exact-reserve/spare-capacity publication was then tested for nonempty masks. Applying it to every
   ring shape reduced pinned native instructions 0.74% and branches 1.01%, but at 4M/16 workers
