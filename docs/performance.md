@@ -1354,6 +1354,14 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Removing the resolved-incidence bounds check through the same parallel-vector invariant reduced
+  pinned native uniform instructions 0.20% and branches 0.41%, and Fibonacci showed an unusually
+  large 0.89%/1.62% reduction with 1.80% lower cycles. Generic counters also reduced instructions
+  and branches. The primary 4M/16-worker uniform gate rejected it: nine pairs regressed cycles 1.08%
+  and wall time 1.00% (only 2/9 and 3/9 favorable), while saving just 0.11% instructions and 0.24%
+  branches. Keep the safe incidence lookup; the all-core code-layout/regime loss outweighs the
+  strong single-thread Fibonacci result.
+
 - Extending reserved unchecked publication from the accepted cell-index stream to the three
   shard-local vertex streams was not additive. It saved only another 0.04--0.05% instructions while
   adding 0.30--0.34% branches; nine five-build native pairs regressed cycles 0.21% on uniform and
