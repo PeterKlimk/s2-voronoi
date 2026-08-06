@@ -5,6 +5,7 @@ Generate sorting network code for u64 values.
 Generates:
 - sort8_net: 8-element network using registers
 - sort16_tail_out: 16-element hybrid network writing tail via out ptr
+- sort24_tail_out: 24-element hybrid network writing tail via out ptr
 
 Uses data from sorting_networks.json
 """
@@ -256,6 +257,16 @@ def main():
         )
     )
     output.append("")
+    output.append(
+        emit_hybrid_sort_tail_out(
+            networks,
+            key="24",
+            fn_name="sort24_tail_out",
+            num_slice=16,
+            doc_slice_len=16,
+        )
+    )
+    output.append("")
     output.append("// Internal tail4 variants for pad-up ranges (to reduce live regs/spills).")
     output.append(
         emit_hybrid_sort_tail_out(
@@ -263,6 +274,18 @@ def main():
             key="16",
             fn_name="sort16_tail_out_12_4",
             num_slice=12,
+            num_regs=4,
+            vis="pub(crate)",
+            microbench_variant=True,
+        )
+    )
+    output.append("")
+    output.append(
+        emit_hybrid_sort_tail_out(
+            networks,
+            key="24",
+            fn_name="sort24_tail_out_20_4",
+            num_slice=20,
             num_regs=4,
             vis="pub(crate)",
             microbench_variant=True,
@@ -319,6 +342,22 @@ mod tests {
         assert_eq!(
             v,
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+    }
+
+    #[test]
+    fn test_sort24_tail_out_exact() {
+        let mut v = vec![
+            24u64, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4,
+            3, 2, 1,
+        ];
+        unsafe { sort24_tail_out(v.as_mut_ptr(), v.as_mut_ptr().add(16), 8) };
+        assert_eq!(
+            v,
+            vec![
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                22, 23, 24
+            ]
         );
     }
 }

@@ -7,7 +7,8 @@ use std::hint::select_unpredictable;
 use std::mem::MaybeUninit;
 use std::ptr;
 
-use crate::generated::sort_nets::{sort16_tail_out, sort16_tail_out_12_4, sort8_net};
+use crate::generated::sort_nets::{sort16_tail_out, sort8_net};
+use crate::generated::sort_nets::{sort16_tail_out_12_4, sort24_tail_out, sort24_tail_out_20_4};
 
 fn cswap_unpredictable_u64(v: &mut [u64], i: usize, j: usize) {
     debug_assert!(i != j);
@@ -88,53 +89,102 @@ unsafe fn bidirectional_merge_u64(v: *const u64, len: usize, dst: *mut u64) {
 #[cfg(test)]
 const SENTINEL: u64 = u64::MAX;
 
-/// Sort a small slice (N <= 35) using sorting networks and short merges.
+/// Sort a small slice (N <= 35) using sorting networks + insertion sort.
 ///
-/// The 17..=24 range sorts a 16-key block and a 1..=8-key suffix, then
-/// merges the two sorted runs backward using a fixed-size stack buffer.
-/// Other supported sizes retain the 8/16 networks and the two-run 32 path.
+/// Strategy (where `rem = N & 7`):
+/// - `N < 8`: fallback to `sort_unstable`
+/// - `rem == 0`: sort with the lower network
+/// - `rem <= 2`: sort with the lower network, then insertion-insert the suffix
+/// - `rem == 3`: pad up to the higher network (when possible)
+/// - `rem >= 4`: pad to the higher network by placing `u64::MAX` sentinels in registers
 ///
 /// Requirements:
 /// - `N <= 35` (larger sizes fall back to `sort_unstable`)
-/// - `u64::MAX` must not appear in inputs whose path pads to 16 or 32
+/// - `u64::MAX` must not appear in the input (used as the sentinel for padding)
 // Public here only so the `microbench` feature can re-export it from the crate
 // root; the normal library surface does not expose the private `sort` module.
 #[allow(unreachable_pub)]
 pub fn sort_small(v: &mut [u64]) {
     let n = v.len();
-    if !(8..=35).contains(&n) {
+    if n < 8 {
         v.sort_unstable();
         return;
     }
 
+    if n > 35 {
+        v.sort_unstable();
+        return;
+    }
+
+    let rem = n & 7; // 0..=7
+    let down = n & !7;
+
+    // Note: `u64::MAX` is our padding sentinel; callers must avoid it.
+    // (Checked in tests; not asserted here to keep this hot path lean.)
+
     unsafe {
         let base = v.as_mut_ptr();
 
-        match n {
-            8 => sort8_in_place(base),
-            9..=10 => {
-                sort8_in_place(base);
-                insert_suffix(v, 8, n - 8);
+        // Use the 4-tail-reg hybrids for all 16/24 sorting to reduce live registers/spills.
+        //
+        // Key detail: for pad-up, the tail starts at 12 (for 16) and 20 (for 24), so `tail_len`
+        // must be computed relative to those cut points to avoid out-of-bounds reads.
+        if rem == 0 {
+            match n {
+                8 => sort8_in_place(base),
+                16 => sort16_tail_out_12_4(base, base.add(12), 4),
+                24 => sort24_tail_out_20_4(base, base.add(20), 4),
+                32 => sort32_maybe_padded(base, 32),
+                _ => unreachable!("unexpected N (must be 8,16,24,32): {n}"),
             }
-            // Padding three values to 16 remains faster than insertion.
-            11 => sort16_tail_out(base, base.add(8), 3),
-            12..=15 => sort16_tail_out_12_4(base, base.add(12), n - 12),
-            16 => sort16_tail_out_12_4(base, base.add(12), 4),
-            17..=24 => {
-                sort16_tail_out_12_4(base, base.add(12), 4);
-                let suffix_len = n - 16;
-                if suffix_len <= 3 {
-                    insert_suffix(v, 16, suffix_len);
-                } else {
-                    sort_and_merge_suffix_back_8(base, 16, suffix_len);
+            return;
+        }
+
+        if rem <= 3 {
+            // Canonical schedule tweak: insertion of 3 values is noticeably slower than either
+            // insertion of 1/2 or just padding up to the next network. Prefer padding for rem=3
+            // whenever we have a suitable pad-up implementation.
+            if rem == 3 {
+                match down {
+                    // 9..=11: pad to 16 (tail starts at 8).
+                    8 => {
+                        sort16_tail_out(base, base.add(8), 3);
+                        return;
+                    }
+                    // 17..=19: pad to 24 (tail starts at 16).
+                    16 => {
+                        sort24_tail_out(base, base.add(16), 3);
+                        return;
+                    }
+                    // 25..=27: pad to 32 (two padded-to-16 runs + merge).
+                    24 => {
+                        sort32_maybe_padded(base, n);
+                        return;
+                    }
+                    // 35 = 32 + 3: no 40-network; fall back to insertion.
+                    32 => {}
+                    _ => unreachable!("unexpected down (must be 8,16,24,32): {down}"),
                 }
             }
-            25..=32 => sort32_maybe_padded(base, n),
-            33..=35 => {
-                sort32_maybe_padded(base, 32);
-                insert_suffix(v, 32, n - 32);
+
+            match down {
+                8 => sort8_in_place(base),
+                16 => sort16_tail_out_12_4(base, base.add(12), 4),
+                24 => sort24_tail_out_20_4(base, base.add(20), 4),
+                32 => sort32_maybe_padded(base, 32),
+                _ => unreachable!("unexpected down (must be 8,16,24,32): {down}"),
             }
-            _ => unreachable!(),
+            insert_suffix(v, down, rem);
+            return;
+        }
+
+        // rem >= 4: pad up to the higher network by placing `u64::MAX` sentinels in tail regs.
+        let up = down + 8;
+        match up {
+            16 => sort16_tail_out_12_4(base, base.add(12), n - 12), // n in 12..=15 => 0..=3
+            24 => sort24_tail_out_20_4(base, base.add(20), n - 20), // n in 20..=23 => 0..=3
+            32 => sort32_maybe_padded(base, n),                     // n in 28..=31
+            _ => unreachable!("unexpected up (must be 16,24,32): {up}"),
         }
     }
 }
@@ -236,38 +286,6 @@ unsafe fn merge_sorted_suffix_back(p: *mut u64, base: usize, rem: usize) {
     }
 }
 
-/// Sort a 4..=8 element suffix and merge it into a sorted prefix in place.
-///
-/// Padding the suffix in fixed storage keeps the random-key path branchless.
-/// The saved copy also prevents the backward merge from overwriting unread keys.
-unsafe fn sort_and_merge_suffix_back_8(p: *mut u64, base: usize, rem: usize) {
-    debug_assert!(base > 0);
-    debug_assert!((4..=8).contains(&rem));
-
-    let mut right = [u64::MAX; 8];
-    ptr::copy_nonoverlapping(p.add(base), right.as_mut_ptr(), rem);
-    right = sort8_net(
-        right[0], right[1], right[2], right[3], right[4], right[5], right[6], right[7],
-    );
-
-    let mut left_len = base;
-    let mut right_len = rem;
-    let mut out = base + rem;
-    while right_len != 0 {
-        if left_len == 0 {
-            ptr::copy_nonoverlapping(right.as_ptr(), p, right_len);
-            break;
-        }
-        let left_val = *p.add(left_len - 1);
-        let right_val = right[right_len - 1];
-        let take_left = left_val > right_val;
-        out -= 1;
-        *p.add(out) = select_unpredictable(take_left, left_val, right_val);
-        left_len -= take_left as usize;
-        right_len -= (!take_left) as usize;
-    }
-}
-
 // On AVX2, inlining this leaf twice makes the general dispatcher preserve two
 // extra callee-saved registers on every sort. Portable codegen retains the
 // inline form; see the measured boundary in docs/performance.md.
@@ -287,22 +305,22 @@ unsafe fn sort8_in_place(base: *mut u64) {
     ptr::copy_nonoverlapping(out.as_ptr(), base, 8);
 }
 
-/// Sort N padded to 32, where `n` is in 25..=32.
+/// Sort N padded to 32, where `n` is in 28..=32.
 ///
 /// For `n < 32`, padding is done by placing `SENTINEL` values in registers (via a
 /// temporary upper half), never by writing sentinels into `v` beyond `n`.
 unsafe fn sort32_maybe_padded(base: *mut u64, n: usize) {
-    debug_assert!((25..=32).contains(&n));
+    debug_assert!((16..=32).contains(&n));
 
     // Sort both halves (len/2 and len-len/2) using sort16_tail_out padded to 16.
     //
     // This lines up with std's smallsort shape (sort two runs, then one merge) while
     // avoiding a dedicated sort32 network and avoiding sorting padded sentinels.
-    let mid = n / 2; // 12..=16
-    debug_assert!((12..=16).contains(&mid));
+    let mid = n / 2; // 8..=16
+    debug_assert!((8..=16).contains(&mid));
     let left_len = mid;
-    let right_len = n - mid; // 13..=16
-    debug_assert!((13..=16).contains(&right_len));
+    let right_len = n - mid; // 8..=16
+    debug_assert!((8..=16).contains(&right_len));
 
     sort16_tail_out(base, base.add(8), left_len - 8);
     sort16_tail_out(base.add(mid), base.add(mid + 8), right_len - 8);
@@ -411,75 +429,6 @@ mod tests {
             expected.sort_unstable();
             sort_small(&mut v);
             assert_eq!(v, expected, "failed for n={n}");
-        }
-    }
-
-    #[test]
-    fn test_sort_small_block_merge_exhaustive_interleavings() {
-        // Exhaust every possible rank interleaving of the sorted 16-key block
-        // and sorted 1..=8-key suffix. Reverse both inputs so their sorting
-        // paths are exercised too.
-        for suffix_len in 1..=8 {
-            let n = 16 + suffix_len;
-            let limit = 1u32 << n;
-            let mut mask = (1u32 << suffix_len) - 1;
-
-            loop {
-                let mut input = [0u64; 24];
-                let mut left = 0;
-                let mut right = 16;
-                for rank in 0..n {
-                    if (mask & (1u32 << rank)) != 0 {
-                        input[right] = rank as u64;
-                        right += 1;
-                    } else {
-                        input[left] = rank as u64;
-                        left += 1;
-                    }
-                }
-                input[..16].reverse();
-                input[16..n].reverse();
-
-                sort_small(&mut input[..n]);
-                for (rank, &value) in input[..n].iter().enumerate() {
-                    assert_eq!(value, rank as u64, "n={n} mask={mask:#x}");
-                }
-
-                // Gosper's hack: advance to the next mask with suffix_len bits.
-                let low_bit = mask & mask.wrapping_neg();
-                let ripple = mask + low_bit;
-                let next = ripple | (((mask ^ ripple) >> 2) / low_bit);
-                if next >= limit {
-                    break;
-                }
-                mask = next;
-            }
-        }
-    }
-
-    #[test]
-    fn test_sort_small_block_merge_random_duplicates_and_max() {
-        let mut state = 0x243f_6a88_85a3_08d3u64;
-        for n in 17..=24 {
-            for sample in 0..2_000 {
-                let mut input = [0u64; 24];
-                for (i, value) in input[..n].iter_mut().enumerate() {
-                    state ^= state << 13;
-                    state ^= state >> 7;
-                    state ^= state << 17;
-                    *value = match (sample + i) % 9 {
-                        0 => 0,
-                        1 => u64::MAX,
-                        2..=4 => state & 7,
-                        _ => state,
-                    };
-                }
-
-                let mut expected = input;
-                expected[..n].sort_unstable();
-                sort_small(&mut input[..n]);
-                assert_eq!(input[..n], expected[..n], "n={n} sample={sample}");
-            }
         }
     }
 
