@@ -1342,6 +1342,18 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Four additional N=3--5 kernel specializations did not survive measurement. Replacing N=5's
+  second four-lane distance evaluation with one scalar fifth lane slowed the changed-clip microbench
+  from 11.40 to 12.05 ns/call. Deferring N=3/4 SIMD vector-to-array materialization until after the
+  all-in/all-out exits also slowed both mixed and unchanged microbench cases; current inlining already
+  sinks or cheaply schedules those values. Spelling out N=3's one/two-survivor cases improved its
+  isolated mixed microbench by about 2%, but whole-build 1M counters added 0.64% instructions, 0.43%
+  branches, and 1.25% cycles. Finally, an initial-synthetic-triangle metadata specialization added a
+  state branch; even moving that discriminator into only the N=3 dispatch arm added 0.45%
+  instructions, 0.81% branches, and 0.50% cycles at 1M, then 0.51% instructions, 0.90% branches,
+  and 1.97% cycles in five 4M all-core pairs. LLVM's current general small kernel remains better than
+  these narrower arithmetic, materialization, survivor, and provenance variants.
+
 - Omitting packed-stage writes to the attempted-neighbor stamp table and allowing shell takeover
   to idempotently re-clip packed neighbors was strongly negative. Although only about 0.06% of the
   4M uniform cells reach shell expansion, their repeated search work raised 1M single-threaded
