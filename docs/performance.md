@@ -607,6 +607,27 @@ across SIMD distance evaluation, interpolation divides, survivor/metadata writes
 and dispatch overhead. This reinforces the existing individual negative results: no single size,
 result class, or assembly sequence now justifies another narrow clipper variant.
 
+A 2026-08-06 simplification pass tested the opposite direction. Routing sizes 3--8 through the
+existing generic bitmask clipper preserved portable/native fingerprints but increased 500k
+Fibonacci/uniform retired instructions by 4.53%/4.71% and cycles by 3.53%/3.64%; the roughly 400-line
+source reduction and 5.8--7.6 KiB text reduction did not justify that hot-path loss. The retained
+small kernel instead now has one source body: the power-of-two modulo choice const-folds per size,
+producing byte-identical native and portable benchmark text while deleting 128 source lines.
+
+Packed-ring simplification produced a similar boundary. Removing the adjacent-two-chunk loop and
+its shared-broadcast numeric helper deleted 107 Rust lines, but interleaved wall time regressed by
+0.54% Fibonacci, 1.78% uniform, 1.63% clustered, 1.31% mega, and 5.15% bimodal; the pair loop is
+therefore structural enough to retain. By contrast, same-bin earlier ranges left over from the
+retired all-ring count model were already skipped by every production consumer. Omitting them at
+collection deleted 47 lines and slightly improved ordinary retired work without changing the
+candidate or emission sequence.
+
+The occupancy feedback is likewise not optional policy decoration. Disabling it made 100k mega
+roughly 100x slower, bimodal 7.7x slower, and cube-vertices 1.8x slower. Replacing adaptation with an
+unconditional maximum-resolution grid moved the cliff to ordinary inputs: Fibonacci/uniform became
+roughly 6.9x slower and great-circle 5.4x slower. Retain the initial coarse grid, catastrophic-work
+trigger, single bounded rebuild, dense band, and concentrated prefix as one adaptive mechanism.
+
 The AVX2 small-sort dispatcher keeps its eight-element network out of line. Inlining that leaf at
 both dispatch sites made every sort preserve two additional callee-saved registers; outlining it
 reduced the dispatcher from 1,538 to 847 bytes and the combined dispatcher/leaf fixed work by

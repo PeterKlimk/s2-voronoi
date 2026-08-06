@@ -831,6 +831,46 @@ tasks and are not duplicated here.
   effectively cycle-neutral; after its first warm pair, instructions were neutral while branches
   fell about one percent. Raw counters are under `/tmp/s2-diagnostic-retire/`.
 
+### QUAL-003 — Pull back over-specialized optimizations
+
+- **Priority:** P2
+- **Status:** Ongoing since 2026-08-06
+- **Scope:** retain supported outputs, robustness, accepted-input behavior, and the packed/grid
+  architecture; simplify bespoke optimization machinery only when current A/B evidence justifies
+  the trade.
+- **Accepted clipper source consolidation:** `f4b765d` merged the modulo and modulo-free small
+  clipper bodies behind a const-folded size choice, removing 128 net Rust lines while retaining all
+  size/bounding monomorphs. Native and portable benchmark `.text` were byte-identical to `fd21be8`,
+  and focused release/checked suites plus all-feature Clippy passed.
+- **Accepted packed worklist cleanup:** `0734707` stopped retaining same-bin earlier cell ranges
+  that every production count, ring pass, and requested-tail pass already skipped. It removed 47
+  net Rust lines and the stale range-kind taxonomy. Seven native counter pairs improved ordinary
+  Fibonacci/uniform instructions to `0.99858`/`0.99848` and branches to `0.99845`/`0.99774` of the
+  parent; concentrated controls were structurally neutral. Raw counters are under
+  `/tmp/s2-exp-packed-worklist/`.
+- **Accepted network-source cleanup:** `5f9a0e7` unified the two hybrid network emitters and reduced
+  `sorting_networks.json` to the only consumed 8/16/24 comparator schedules. The checked-in
+  generated Rust remained byte-identical while 20,285 net generator/data lines were removed.
+- **Rejected generic clipper:** routing sizes 3--8 through the existing generic bitmask clipper
+  would remove roughly 400 production lines and cut native/portable text by about 5.8/7.6 KiB, but
+  raised Fibonacci/uniform instructions by 4.53%/4.71% and cycles by 3.53%/3.64%. Fingerprints and
+  focused tests were unchanged; the specialized small kernel remains justified. Raw data is under
+  `/tmp/s2-exp-clipper-build/`.
+- **Rejected single-chunk packed ring:** removing paired ring processing saved 107 Rust lines and
+  about 0.9 KiB native text, but interleaved wall time regressed Fibonacci 0.54%, uniform 1.78%,
+  clustered 1.63%, mega 1.31%, and bimodal 5.15%; paired processing remains. Raw data is under
+  `/tmp/s2-exp-packed-single/`.
+- **Retained occupancy feedback:** disabling the adaptive regrid made 100k mega roughly 100x slower,
+  bimodal about 7.7x slower, and cube-vertices about 1.8x slower. Replacing it with an unconditional
+  maximum-resolution grid made ordinary Fibonacci/uniform roughly 6.9x slower and great-circle
+  about 5.4x slower. The trigger, one rebuild, dense band, and concentrated prefix form one
+  justified adaptive policy rather than removable micro-tuning.
+- **Deferred cold sharing and tail selection:** one shared directed-link-cycle predicate removed
+  duplicated cold logic but saved only 39 net lines and repeatedly added about 1.45% uniform cycles
+  despite neutral/favorable retired instructions, so it was restored. Making Tail use whole-network
+  sorting for 9--16 candidates simplified its dual path but added about 0.38%/0.48% ordinary
+  instructions; a purpose-built ordered top-8 selection network remains the better hypothesis.
+
 ### WORK-001 — Output-resolution certificate soak and component hardening
 
 - **Priority:** P2
