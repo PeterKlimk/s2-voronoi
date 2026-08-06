@@ -1354,6 +1354,16 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Publishing the accepted reserved cell-index span only once after the cell loop was tested in two
+  forms. Enumerating fixed output offsets removed 0.17--0.28% instructions but added branches and
+  branch misses, regressing five-to-seven-pair native 4M cycles 2.18% and wall time 2.72%. A pointer
+  cursor preserved the original zip loop and was much closer: native instructions fell 0.08--0.09%
+  and branch misses about 0.31--0.35%, while generic instructions/branches fell 0.21--0.23%/0.12--0.13%.
+  Native static branches nevertheless rose 0.29--0.33%; pinned cycles were neutral, and a second nine-
+  pair 4M set had only 4/9 favorable cycles and 3/9 favorable wall times (medians +0.21%/+1.20%).
+  The extra raw-cursor lifetime and delayed-length invariant are not justified without an all-core
+  win. Keep the accepted per-entry reserved push, which has the simpler publication boundary.
+
 - Removing the resolved-incidence bounds check through the same parallel-vector invariant reduced
   pinned native uniform instructions 0.20% and branches 0.41%, and Fibonacci showed an unusually
   large 0.89%/1.62% reduction with 1.80% lower cycles. Generic counters also reduced instructions
