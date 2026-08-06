@@ -1342,6 +1342,11 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Caching `neighbors_processed` in a batch-local variable removed repeated counter-field traffic
+  and reduced native instructions by 0.13% at 1M, but it changed loop lowering enough to add 0.82%
+  branches. Five 4M all-core pairs likewise reduced instructions only 0.07% while adding 0.91%
+  branches and 0.21% branch misses; wall time was worse in every pair. Keep the direct counter update.
+
 - Four additional N=3--5 kernel specializations did not survive measurement. Replacing N=5's
   second four-lane distance evaluation with one scalar fifth lane slowed the changed-clip microbench
   from 11.40 to 12.05 ns/call. Deferring N=3/4 SIMD vector-to-array materialization until after the
