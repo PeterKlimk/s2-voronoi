@@ -47,19 +47,6 @@ pub(crate) struct PackedKnnCellScratch {
 struct PackedCellRange {
     soa_start: usize,
     soa_end: usize,
-    kind: PackedCellRangeKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PackedCellRangeKind {
-    /// Neighbor cell is in a different bin than the queries (no directed filter needed).
-    CrossBin,
-    /// Neighbor cell is in the same bin and strictly earlier than the group cell
-    /// (all locals are < any query local; can skip the whole cell).
-    SameBinEarlier,
-    /// Neighbor cell is in the same bin and strictly later than the group cell
-    /// (no locals are < query local; no directed filter needed).
-    SameBinLater,
 }
 
 pub(crate) struct PreparedPackedGroup<'a, 'g> {

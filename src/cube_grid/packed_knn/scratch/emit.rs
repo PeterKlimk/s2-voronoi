@@ -51,7 +51,6 @@ impl PackedKnnCellScratch {
         let PackedCellRange {
             soa_start: center_start,
             soa_end: center_end,
-            ..
         } = self.cell_ranges[0];
         let center_pos = query_slot_usize - center_start;
         let suffix_start = query_slot_usize + 1;
@@ -97,10 +96,6 @@ impl PackedKnnCellScratch {
         let ring_old_len = tail_keys.len();
         let mut ring_dot_evaluations = 0usize;
         for r in &self.cell_ranges[1..] {
-            if r.kind == PackedCellRangeKind::SameBinEarlier {
-                continue;
-            }
-
             let soa_start = r.soa_start;
             let soa_end = r.soa_end;
             let range_len = soa_end - soa_start;

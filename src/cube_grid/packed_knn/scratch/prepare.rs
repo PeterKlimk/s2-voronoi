@@ -9,7 +9,6 @@ struct DirectedRangeSummary {
     center_soa_start: usize,
     center_soa_end: usize,
     ring_candidates_eligible: usize,
-    ring_candidates_all: usize,
 }
 
 #[inline]
@@ -133,7 +132,6 @@ impl PackedKnnCellScratch {
         self.cell_ranges.push(PackedCellRange {
             soa_start: center_soa_start,
             soa_end: center_soa_end,
-            kind: PackedCellRangeKind::CrossBin,
         });
 
         for &ncell in grid.cell_neighbors(cell) {
@@ -151,31 +149,22 @@ impl PackedKnnCellScratch {
                 // - skipping same-bin neighbor cells strictly earlier than the center cell
                 // - avoiding per-point (bin,local) decoding for all other neighbor cells
                 let (bin_b, _) = layout.bin_local(n_start as u32);
-                let kind = if bin_b != query_bin {
-                    PackedCellRangeKind::CrossBin
-                } else if ncell < cell as u32 {
-                    PackedCellRangeKind::SameBinEarlier
-                } else {
-                    PackedCellRangeKind::SameBinLater
-                };
+                if bin_b == query_bin && ncell < cell as u32 {
+                    continue;
+                }
 
                 self.cell_ranges.push(PackedCellRange {
                     soa_start: n_start,
                     soa_end: n_end,
-                    kind,
                 });
             }
         }
 
-        let mut num_candidates = 0usize;
-        for range in &self.cell_ranges {
-            // If this neighbor cell is earlier-local in the same bin, we never consider it for
-            // directed kNN (the earlier side already sent adjacency via edge checks).
-            if range.kind == PackedCellRangeKind::SameBinEarlier {
-                continue;
-            }
-            num_candidates += range.soa_end - range.soa_start;
-        }
+        let num_candidates = self
+            .cell_ranges
+            .iter()
+            .map(|range| range.soa_end - range.soa_start)
+            .sum::<usize>();
         if num_candidates > MAX_CANDIDATES_HARD {
             return None;
         }
@@ -186,21 +175,15 @@ impl PackedKnnCellScratch {
             return None;
         }
 
-        let mut ring_candidates_eligible = 0usize;
-        let mut ring_candidates_all = 0usize;
-        for range in &self.cell_ranges[1..] {
-            ring_candidates_all += range.soa_end - range.soa_start;
-            if range.kind == PackedCellRangeKind::SameBinEarlier {
-                continue;
-            }
-            ring_candidates_eligible += range.soa_end - range.soa_start;
-        }
+        let ring_candidates_eligible = self.cell_ranges[1..]
+            .iter()
+            .map(|range| range.soa_end - range.soa_start)
+            .sum();
 
         Some(DirectedRangeSummary {
             center_soa_start,
             center_soa_end,
             ring_candidates_eligible,
-            ring_candidates_all,
         })
     }
 
@@ -237,7 +220,6 @@ impl PackedKnnCellScratch {
             center_soa_start,
             center_soa_end,
             ring_candidates_eligible,
-            ring_candidates_all: _,
         }) = self.collect_directed_ranges(grid, group)
         else {
             timings.add_setup(t.lap());
@@ -351,7 +333,6 @@ impl PackedKnnCellScratch {
         let PackedCellRange {
             soa_start: center_soa_start,
             soa_end: center_soa_end,
-            ..
         } = self.cell_ranges[0];
         let center_len = center_soa_end - center_soa_start;
         let xs = &grid.cell_points_x[center_soa_start..center_soa_end];
@@ -620,10 +601,6 @@ impl PackedKnnCellScratch {
         // test rarely prunes. See docs/performance.md#retired-experiments.
         let thresholds = &self.thresholds[..num_queries];
         for r in &self.cell_ranges[1..] {
-            if r.kind == PackedCellRangeKind::SameBinEarlier {
-                continue;
-            }
-
             let soa_start = r.soa_start;
             let soa_end = r.soa_end;
             let range_len = soa_end - soa_start;
@@ -820,7 +797,7 @@ mod range_tests {
     }
 
     #[test]
-    fn directed_ranges_retain_earlier_neighbors_but_exclude_their_work() {
+    fn directed_ranges_exclude_earlier_same_bin_neighbors() {
         const LOCAL_SHIFT: u32 = 24;
         const LOCAL_MASK: u32 = (1 << LOCAL_SHIFT) - 1;
 
@@ -861,9 +838,9 @@ mod range_tests {
             layout,
         );
 
-        let mut expected_ranges = vec![(center_start, center_end, PackedCellRangeKind::CrossBin)];
-        let mut ring_candidates_all = 0usize;
+        let mut expected_ranges = vec![(center_start, center_end)];
         let mut ring_candidates_eligible = 0usize;
+        let mut excluded_earlier = 0usize;
         for &neighbor in grid.cell_neighbors(cell) {
             if neighbor == u32::MAX || neighbor == cell as u32 {
                 continue;
@@ -874,16 +851,12 @@ mod range_tests {
             if start == end {
                 continue;
             }
-            let kind = if neighbor < cell {
-                PackedCellRangeKind::SameBinEarlier
-            } else {
-                PackedCellRangeKind::SameBinLater
-            };
-            expected_ranges.push((start, end, kind));
-            ring_candidates_all += end - start;
-            if kind != PackedCellRangeKind::SameBinEarlier {
-                ring_candidates_eligible += end - start;
+            if neighbor < cell {
+                excluded_earlier += 1;
+                continue;
             }
+            expected_ranges.push((start, end));
+            ring_candidates_eligible += end - start;
         }
 
         let mut scratch = PackedKnnCellScratch::new();
@@ -893,14 +866,12 @@ mod range_tests {
 
         assert_eq!(summary.center_soa_start, center_start);
         assert_eq!(summary.center_soa_end, center_end);
-        assert_eq!(summary.ring_candidates_all, ring_candidates_all);
         assert_eq!(summary.ring_candidates_eligible, ring_candidates_eligible);
-        assert!(ring_candidates_eligible < ring_candidates_all);
+        assert!(excluded_earlier > 0);
         assert_eq!(scratch.cell_ranges.len(), expected_ranges.len());
-        for (actual, &(start, end, kind)) in scratch.cell_ranges.iter().zip(&expected_ranges) {
+        for (actual, &(start, end)) in scratch.cell_ranges.iter().zip(&expected_ranges) {
             assert_eq!(actual.soa_start, start);
             assert_eq!(actual.soa_end, end);
-            assert_eq!(actual.kind, kind);
         }
     }
 }
