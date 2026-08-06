@@ -1342,6 +1342,14 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Omitting packed-stage writes to the attempted-neighbor stamp table and allowing shell takeover
+  to idempotently re-clip packed neighbors was strongly negative. Although only about 0.06% of the
+  4M uniform cells reach shell expansion, their repeated search work raised 1M single-threaded
+  instructions 0.78%, branches 1.71%, branch misses 4.03%, and cycles 8.20%; five 4M all-core pairs
+  raised cycles 5.12% and wall time 8.44%. Any future lazy-marking design must reconstruct the exact
+  packed prefix before takeover rather than replay it; the ordinary per-packed-candidate stamp is
+  far cheaper than rare but very deep duplicate shell work.
+
 - Caching monotonic builder boundedness inside `clip_batch_source` added 0.11% instructions and
   0.33% branches on native 1M single-threaded uniform; 4M/16-worker counters showed the same
   direction. A full initial-unbounded/steady-bounded loop split was worse: despite outlining the
