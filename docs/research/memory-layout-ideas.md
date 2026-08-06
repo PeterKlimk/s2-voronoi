@@ -544,6 +544,30 @@ Fibonacci and uniform runs (roughly 0.1--0.3% more cycles). The larger initial a
 free replacement for geometric `Vec` growth; retain the allocator traffic rather than spend extra
 work on every ordinary queue.
 
+### Compact handle-table follow-up — implemented 2026-08-06
+
+A materially different follow-up keeps payloads as ordinary contiguous `Vec<EdgeCheck>` allocations
+but removes the per-generator header. Each local generator stores one `u32` handle; only concurrently
+active queues occupy a dense reusable header table. Taking a queue still moves its `Vec` into the
+cell builder without copying, and recycling returns that allocation to the same reusable handle
+before the cell forwards new checks. Exact enqueue order and the shrinking-suffix resolver are
+unchanged.
+
+The required concurrency gate was strongly favorable at 4M: uniform/Fibonacci populated
+3.53M/3.78M queues and pushed about 11.92M checks, but only 4,153/4,100 queues were simultaneously
+active across all workers. Per-shard reuse needed 26,268/24,728 allocated queue headers in total;
+maximum queue lengths were 13/9. Peak RSS fell by roughly 68 MiB, from about 1,082,000 KiB to
+1,013,000 KiB.
+
+Unlike the rejected pointer-per-generator and fixed-block forms, the compact random-access stream is
+only four bytes per generator and the indirection lands in a small dense header table. Twenty plain
+4M uniform/16-worker pairs improved wall time 1.85% geometrically (17/20 favorable), while twelve
+coarse-timing pairs improved cell construction 1.16% and shard assembly 3.71%. Generic 4M uniform
+also improved wall time 2.01% in six of seven pairs. Retired instructions and static branches rise,
+so this is specifically an all-core locality/memory-envelope win; a six-bin single-thread guardrail
+was cycle-neutral. This supersedes the section's earlier default-path rejection only for the dense
+handle-table design, not for pointer-owned or inline-block queues.
+
 ## 6. Lower-priority local layout experiments
 
 These may remove load uops or L1 traffic but are less likely to move a true multithreaded memory

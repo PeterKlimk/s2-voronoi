@@ -160,14 +160,29 @@ fn reconcile_edge_endpoints(
 }
 
 impl ShardDedup {
+    const INVALID_QUEUE_HANDLE: u32 = u32::MAX;
+
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
         let local_idx = local.as_usize();
         debug_assert!(
-            local_idx < self.edge_checks.len(),
+            local_idx < self.edge_check_handles.len(),
             "edge check local out of bounds"
         );
 
-        let slot = &mut self.edge_checks[local_idx];
+        let mut handle = self.edge_check_handles[local_idx];
+        if handle == Self::INVALID_QUEUE_HANDLE {
+            handle = if let Some(handle) = self.free_edge_check_handles.pop() {
+                handle
+            } else {
+                let next = u32::try_from(self.edge_check_queues.len())
+                    .expect("active edge queue table exceeds u32 capacity");
+                self.edge_check_queues.push(Vec::new());
+                next
+            };
+            self.edge_check_handles[local_idx] = handle;
+        }
+
+        let slot = &mut self.edge_check_queues[handle as usize];
         if slot.capacity() == 0 {
             if let Some(mut queue) = self.edge_check_pool.pop() {
                 queue.clear();
@@ -180,14 +195,30 @@ impl ShardDedup {
     pub(crate) fn take_edge_checks(&mut self, local: LocalId) -> Vec<EdgeCheck> {
         let local_idx = local.as_usize();
         debug_assert!(
-            local_idx < self.edge_checks.len(),
+            local_idx < self.edge_check_handles.len(),
             "edge check local out of bounds"
         );
-        mem::take(&mut self.edge_checks[local_idx])
+        let handle = mem::replace(
+            &mut self.edge_check_handles[local_idx],
+            Self::INVALID_QUEUE_HANDLE,
+        );
+        if handle == Self::INVALID_QUEUE_HANDLE {
+            return Vec::new();
+        }
+        debug_assert!(self.pending_edge_check_handle.is_none());
+        self.pending_edge_check_handle = Some(handle);
+        mem::take(&mut self.edge_check_queues[handle as usize])
     }
 
-    pub(super) fn recycle_edge_checks(&mut self, incoming: Vec<EdgeCheck>) {
-        self.edge_check_pool.push(incoming);
+    pub(super) fn recycle_edge_checks(&mut self, mut incoming: Vec<EdgeCheck>) {
+        incoming.clear();
+        if let Some(handle) = self.pending_edge_check_handle.take() {
+            debug_assert!(self.edge_check_queues[handle as usize].is_empty());
+            self.edge_check_queues[handle as usize] = incoming;
+            self.free_edge_check_handles.push(handle);
+        } else {
+            self.edge_check_pool.push(incoming);
+        }
     }
 }
 
@@ -583,6 +614,46 @@ pub(super) fn resolve_edge_check_overflow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_queue_handles_reuse_cleared_payloads_in_order() {
+        let mut dedup = ShardDedup::new(128);
+        let first = EdgeCheck {
+            neighbor_slot: 11,
+            thirds: [1, 2],
+            indices: [3, 4],
+        };
+        let second = EdgeCheck {
+            neighbor_slot: 12,
+            thirds: [5, 6],
+            indices: [7, 8],
+        };
+        dedup.push_edge_check(LocalId::from(80), first);
+        dedup.push_edge_check(LocalId::from(80), second);
+        assert_eq!(dedup.edge_check_queues.len(), 1);
+
+        let incoming = dedup.take_edge_checks(LocalId::from(80));
+        assert_eq!(incoming.len(), 2);
+        assert_eq!(incoming[0].neighbor_slot, 11);
+        assert_eq!(incoming[1].neighbor_slot, 12);
+        dedup.recycle_edge_checks(incoming);
+
+        let third = EdgeCheck {
+            neighbor_slot: 13,
+            thirds: [9, 10],
+            indices: [11, 12],
+        };
+        dedup.push_edge_check(LocalId::from(96), third);
+        assert_eq!(
+            dedup.edge_check_queues.len(),
+            1,
+            "queue header should be reused"
+        );
+        let incoming = dedup.take_edge_checks(LocalId::from(96));
+        assert_eq!(incoming.len(), 1, "recycled payload must be cleared");
+        assert_eq!(incoming[0].neighbor_slot, 13);
+        dedup.recycle_edge_checks(incoming);
+    }
 
     #[test]
     #[should_panic(expected = "cell output arrays out of sync")]

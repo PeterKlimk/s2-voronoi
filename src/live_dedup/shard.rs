@@ -9,16 +9,29 @@ use rustc_hash::FxHashMap;
 
 /// Data only needed during vertex deduplication (dropped after overflow flush).
 pub(crate) struct ShardDedup {
-    /// Per-local edge checks (Vec-based for cache locality).
-    pub(super) edge_checks: Vec<Vec<EdgeCheck>>,
-    /// Pool of reusable Vecs with existing capacity.
+    /// Compact per-local handle into the active queue table. Most queue headers
+    /// are never live simultaneously, so storing a 24-byte `Vec` per generator
+    /// wastes both initialization traffic and cache/TLB reach.
+    pub(super) edge_check_handles: Vec<u32>,
+    /// Headers for concurrently active queues; empty slots are reused through
+    /// `free_edge_check_handles`.
+    pub(super) edge_check_queues: Vec<Vec<EdgeCheck>>,
+    pub(super) free_edge_check_handles: Vec<u32>,
+    /// A nonempty queue is borrowed by exactly one cell at a time and returned
+    /// before that cell forwards new checks into this shard.
+    pub(super) pending_edge_check_handle: Option<u32>,
+    /// Fallback pool for synthetic/direct incoming vectors that were not taken
+    /// from this shard's handle table (primarily focused reconciliation tests).
     pub(super) edge_check_pool: Vec<Vec<EdgeCheck>>,
 }
 
 impl ShardDedup {
     pub(super) fn new(num_local_generators: usize) -> Self {
         Self {
-            edge_checks: (0..num_local_generators).map(|_| Vec::new()).collect(),
+            edge_check_handles: vec![u32::MAX; num_local_generators],
+            edge_check_queues: Vec::new(),
+            free_edge_check_handles: Vec::new(),
+            pending_edge_check_handle: None,
             edge_check_pool: Vec::new(),
         }
     }

@@ -241,6 +241,25 @@ cycles. Generic-target instructions fell 0.15%/0.20%; its static branch count ro
 but branch misses fell 0.92%/0.48% and cycles improved 0.55%/0.11%. Keep the exact reserve-plus-fill
 data flow, not reserve alone.
 
+Per-local incoming edge checks now use a compact `u32` handle table plus a dense reusable table of
+only concurrently active queue headers, rather than one 24-byte `Vec` header per generator. A 4M
+telemetry census found 3.53--3.78M populated queues and 11.92M pushes, but only about 4.1k queues
+active concurrently; per-shard allocation reuse required just 24.7--26.3k queue headers in total,
+and maximum queue length was 9 on Fibonacci and 13 on uniform. The handle form preserves contiguous
+`Vec<EdgeCheck>` payloads, exact enqueue order, and zero-copy transfer into the cell builder. It
+returns the borrowed payload to its queue slot before outgoing checks are forwarded, keeping the
+ordinary reuse path allocation-free.
+
+At 4M uniform/16 workers, twenty plain interleaved pairs improved wall time by 1.85% geometrically
+(17/20 favorable; paired median 1.27%). Twelve timing-feature pairs reduced internal total time
+1.08% (9/12), cell construction 1.16% (8/12), and shard assembly 3.71% (8/12). Native Fibonacci
+three-build counter pairs reduced cycles about 1.06% and branch misses 1.02%; generic-target 4M
+uniform reduced cycles 0.79% and wall time 2.01% in six of seven pairs. The locality win costs
+roughly 0.5--1.0% more instructions and 1.2--2.5% more static branches depending on target and
+distribution, while a six-bin single-thread guardrail remained cycle-neutral. Peak RSS at 4M fell
+repeatably from about 1,082,000 KiB to 1,013,000 KiB (roughly 68 MiB). Keep the compact handle table
+as an all-core locality and memory-envelope improvement, not as a scalar retired-work optimization.
+
 The telemetry feature reports `weld_pairs`, `weld_pair_capacity`,
 `packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
 rescan/dot counts, total/unrequested center-tail candidates, and total/unused high-threshold
@@ -1333,11 +1352,11 @@ Promising workload-specific experiments:
 
 Assembly/live-dedup swarm backlog (2026-07-13):
 
-- **Flatten per-local edge-check queues only as a memory redesign:** `Vec<Vec<EdgeCheck>>` pays a
-  `Vec` header per local generator. A node arena plus head/tail arrays could reduce empty-queue
-  metadata, but it loses the current zero-copy transfer and may add traversal/copy work. Require
-  queue-count telemetry and preserve exact directed enqueue order, mismatch-key emission, and
-  high-degree behavior before prototyping.
+- **Compact per-local edge-check handles — implemented:** the queue-count gate found only about
+  4.1k simultaneously active queues at 4M despite 3.5--3.8M populated targets. A `u32` handle table
+  plus dense reusable `Vec` headers preserves contiguous payloads and zero-copy transfer while
+  removing the per-generator 24-byte header array. Results are recorded above; a linked node arena
+  is no longer warranted because this design retains the existing payload and ordering semantics.
 - **Deduplicate reconciliation work by unresolved edge key:** defect inputs can report the same key
   more than once. A reconciliation-only unique-key view may avoid repeated work, but existing large
   probes found only a few mismatch records, so this remains a cold-path robustness idea rather than
