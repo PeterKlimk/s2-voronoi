@@ -1854,6 +1854,20 @@ Do not broadly retry these without a materially different design or workload:
   Fibonacci (instructions -0.007%, branches +0.009%) but regressed 500k native clustered by 0.048%
   instructions, 0.106% branches, and 1.74% cycles. Most activated tail-rescan chunks have at least
   one security-safe lane, so keep computing the high-threshold mask without an extra branch.
+- A post-queue ring-mask census confirmed that empty emission masks dominate packed preparation. At
+  4M uniform, the paired-chunk combined-empty branch fired 68.51% of 17.85M query-pair visits; the
+  single and remainder branches were empty 74.48% and 82.51%. Across 58.45M individual masks,
+  76.59% were empty and a nonempty mask emitted only 1.97 keys on average. Fibonacci and clustered
+  controls had even higher combined-empty rates (77--87%). Retain the empty fast exit rather than
+  predicating dot extraction and publication.
+
+  Exact-reserve/spare-capacity publication was then tested for nonempty masks. Applying it to every
+  ring shape reduced pinned native instructions 0.74% and branches 1.01%, but at 4M/16 workers
+  branch misses rose 0.61% and cycles were neutral. Restricting it to the dominant paired chunks and
+  sharing one reserve/publication reduced native 4M instructions 0.25% and branches 0.43%, yet branch
+  misses rose 0.46% in fourteen of fifteen pairs. Generic-target pinned runs added 0.20--0.25%
+  instructions and 0.25--0.32% cycles. Keep ordinary `Vec::push`: the per-entry capacity control is
+  cheaper than the reserve/popcount/raw-publication state in the branch-latency target regime.
 - Fusing the full and overlapping remainder chunks for 9--15 point packed ring ranges shared the
   query broadcasts and one combined-empty test, directly targeting the hottest sampled branch in
   `prepare_group_directed`. A rotated Windows 2.5M Fibonacci phase ring was directionally favorable
