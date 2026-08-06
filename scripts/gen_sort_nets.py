@@ -104,166 +104,83 @@ def emit_sort8(networks):
     return "\n".join(lines)
 
 
-def emit_hybrid_sort_tail_out(networks, key, fn_name, num_slice, doc_slice_len):
-    """Generate a hybrid sorting network that stores the last tail_len values via out ptr."""
+def emit_hybrid_sort_tail_out(
+    networks,
+    key,
+    fn_name,
+    num_slice,
+    doc_slice_len=None,
+    num_regs=8,
+    vis="pub(crate)",
+    microbench_variant=False,
+):
+    """Generate a hybrid sorting network with a parameterized tail-register count."""
     data = networks[key]
     comparators = data["comparators"]
 
     n_total = int(key)
-    assert n_total == num_slice + 8
+    if doc_slice_len is None:
+        doc_slice_len = num_slice
+    assert n_total == num_slice + num_regs
+    assert 1 <= num_regs <= 8
 
-    lines = [f"/// Sort {n_total} elements using a hybrid sorting network."]
-    lines.append(
-        f"/// First {doc_slice_len} elements are in the slice at `base`, remaining up to 8 are in `base[{doc_slice_len}..]`."
-    )
+    if microbench_variant:
+        lines = [
+            f"/// Sort {n_total} elements using a hybrid sorting network (tail regs = {num_regs})."
+        ]
+        lines.append(
+            f"/// First {doc_slice_len} elements are in the slice at `base`, remaining up to {num_regs} are in `base[{doc_slice_len}..]`."
+        )
+    else:
+        lines = [f"/// Sort {n_total} elements using a hybrid sorting network."]
+        lines.append(
+            f"/// First {doc_slice_len} elements are in the slice at `base`, remaining up to 8 are in `base[{doc_slice_len}..]`."
+        )
     lines.append("///")
     lines.append(
         "/// Loads up to `tail_len` values from the tail, fills the remainder with the sentinel `u64::MAX`,"
     )
-    lines.append("/// runs the sorting network, then stores only the first `tail_len` tail outputs into `out`.")
+    lines.append(
+        "/// runs the sorting network, then stores only the first `tail_len` tail outputs into `out`."
+    )
     lines.append("///")
-    lines.append("/// This is optimized for the common padded case where `tail_len < 8`.")
+    if microbench_variant:
+        lines.append("/// This is intended for microbench experiments and is not part of the library API.")
+    else:
+        lines.append("/// This is optimized for the common padded case where `tail_len < 8`.")
     lines.append("///")
     lines.append("/// # Safety")
     lines.append(f"/// - `base` must point to at least {doc_slice_len} valid u64 elements")
     lines.append("/// - `out` must point to at least `tail_len` valid u64 elements")
-    lines.append("/// - `tail_len <= 8`")
-    lines.append("/// - Callers must ensure `u64::MAX` does not appear in the input values when using padding")
-    # Keep this as an out-of-line function by default to avoid code-size bloat when
-    # used as a building block (e.g., inside larger routines).
-    lines.append(
-        f"pub(crate) unsafe fn {fn_name}(base: *mut u64, out: *mut u64, tail_len: usize) {{"
-    )
-    lines.append("    debug_assert!(tail_len <= 8);")
-    lines.append("")
-    lines.append("    // Load tail registers (pad with sentinels).")
-    lines.append(f"    let tail = base.add({doc_slice_len});")
-    lines.append("    let mut r0 = u64::MAX;")
-    lines.append("    let mut r1 = u64::MAX;")
-    lines.append("    let mut r2 = u64::MAX;")
-    lines.append("    let mut r3 = u64::MAX;")
-    lines.append("    let mut r4 = u64::MAX;")
-    lines.append("    let mut r5 = u64::MAX;")
-    lines.append("    let mut r6 = u64::MAX;")
-    lines.append("    let mut r7 = u64::MAX;")
-    lines.append("    if tail_len == 8 {")
-    lines.append("        r0 = ptr::read(tail.add(0));")
-    lines.append("        r1 = ptr::read(tail.add(1));")
-    lines.append("        r2 = ptr::read(tail.add(2));")
-    lines.append("        r3 = ptr::read(tail.add(3));")
-    lines.append("        r4 = ptr::read(tail.add(4));")
-    lines.append("        r5 = ptr::read(tail.add(5));")
-    lines.append("        r6 = ptr::read(tail.add(6));")
-    lines.append("        r7 = ptr::read(tail.add(7));")
-    lines.append("    } else {")
-    lines.append("        match tail_len {")
-    lines.append("            0 => {}")
-    lines.append("            1 => { r0 = ptr::read(tail.add(0)); }")
-    lines.append("            2 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); }")
-    lines.append("            3 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); }")
-    lines.append("            4 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); }")
-    lines.append("            5 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); r4 = ptr::read(tail.add(4)); }")
-    lines.append("            6 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); r4 = ptr::read(tail.add(4)); r5 = ptr::read(tail.add(5)); }")
-    lines.append("            7 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); r4 = ptr::read(tail.add(4)); r5 = ptr::read(tail.add(5)); r6 = ptr::read(tail.add(6)); }")
-    lines.append("            _ => unreachable!(),")
-    lines.append("        }")
-    lines.append("    }")
-    lines.append("")
-
-    for i, j in comparators:
-        if i > j:
-            i, j = j, i
-
-        i_is_reg = i >= num_slice
-        j_is_reg = j >= num_slice
-
-        if i_is_reg and j_is_reg:
-            lines.append(f"    cswap_reg(&mut r{i - num_slice}, &mut r{j - num_slice});")
-        else:
-            if not j_is_reg:
-                lines.append(f"    cswap_ptr(base, {i}, {j});")
-            else:
-                lines.append(f"    cswap_reg_ptr(&mut r{j - num_slice}, base, {i});")
-
-    lines.append("")
-    lines.append("    match tail_len {")
-    lines.append("        0 => {}")
-    lines.append("        1 => *out.add(0) = r0,")
-    lines.append("        2 => { *out.add(0) = r0; *out.add(1) = r1; }")
-    lines.append("        3 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; }")
-    lines.append(
-        "        4 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; }"
-    )
-    lines.append(
-        "        5 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; }"
-    )
-    lines.append(
-        "        6 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; }"
-    )
-    lines.append(
-        "        7 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; }"
-    )
-    lines.append(
-        "        8 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; *out.add(7) = r7; }"
-    )
-    lines.append("        _ => unreachable!(),")
-    lines.append("    }")
-    lines.append("}")
-    return "\n".join(lines)
-
-def emit_hybrid_sort_tail_out_var_regs(
-    networks, key, fn_name, num_slice, num_regs, vis="pub(crate)"
-):
-    """Like emit_hybrid_sort_tail_out, but supports a variable number of tail registers."""
-    data = networks[key]
-    comparators = data["comparators"]
-
-    n_total = int(key)
-    assert n_total == num_slice + num_regs
-    assert 1 <= num_regs <= 8
-
-    lines = [f"/// Sort {n_total} elements using a hybrid sorting network (tail regs = {num_regs})."]
-    lines.append(
-        f"/// First {num_slice} elements are in the slice at `base`, remaining up to {num_regs} are in `base[{num_slice}..]`."
-    )
-    lines.append("///")
-    lines.append(
-        f"/// Loads up to `tail_len` values from the tail, fills the remainder with the sentinel `u64::MAX`,"
-    )
-    lines.append("/// runs the sorting network, then stores only the first `tail_len` tail outputs into `out`.")
-    lines.append("///")
-    lines.append("/// This is intended for microbench experiments and is not part of the library API.")
-    lines.append("///")
-    lines.append("/// # Safety")
-    lines.append(f"/// - `base` must point to at least {num_slice} valid u64 elements")
-    lines.append("/// - `out` must point to at least `tail_len` valid u64 elements")
     lines.append(f"/// - `tail_len <= {num_regs}`")
     lines.append("/// - Callers must ensure `u64::MAX` does not appear in the input values when using padding")
+    # Keep the production variants as out-of-line functions by default to avoid
+    # code-size bloat when used as building blocks (e.g., inside larger routines).
     lines.append(f"{vis} unsafe fn {fn_name}(base: *mut u64, out: *mut u64, tail_len: usize) {{")
     lines.append(f"    debug_assert!(tail_len <= {num_regs});")
     lines.append("")
     lines.append("    // Load tail registers (pad with sentinels).")
-    lines.append(f"    let tail = base.add({num_slice});")
-
+    lines.append(f"    let tail = base.add({doc_slice_len});")
     for i in range(num_regs):
         lines.append(f"    let mut r{i} = u64::MAX;")
-
     lines.append(f"    if tail_len == {num_regs} {{")
     for i in range(num_regs):
         lines.append(f"        r{i} = ptr::read(tail.add({i}));")
     lines.append("    } else {")
     lines.append("        match tail_len {")
     lines.append("            0 => {}")
-    for tl in range(1, num_regs):
-        reads = " ".join([f"r{i} = ptr::read(tail.add({i}));" for i in range(tl)])
-        lines.append(f"            {tl} => {{ {reads} }}")
-    lines.append(f"            {num_regs} => unreachable!(),")
+    for tail_len in range(1, num_regs):
+        reads = " ".join(
+            f"r{i} = ptr::read(tail.add({i}));" for i in range(tail_len)
+        )
+        lines.append(f"            {tail_len} => {{ {reads} }}")
+    if microbench_variant:
+        lines.append(f"            {num_regs} => unreachable!(),")
     lines.append("            _ => unreachable!(),")
     lines.append("        }")
     lines.append("    }")
     lines.append("")
 
-    # Map comparator indices into either base pointers or tail regs.
     for i, j in comparators:
         if i > j:
             i, j = j, i
@@ -273,22 +190,40 @@ def emit_hybrid_sort_tail_out_var_regs(
 
         if i_is_reg and j_is_reg:
             lines.append(f"    cswap_reg(&mut r{i - num_slice}, &mut r{j - num_slice});")
+        elif not j_is_reg:
+            lines.append(f"    cswap_ptr(base, {i}, {j});")
         else:
-            if not j_is_reg:
-                lines.append(f"    cswap_ptr(base, {i}, {j});")
-            else:
-                lines.append(f"    cswap_reg_ptr(&mut r{j - num_slice}, base, {i});")
+            lines.append(f"    cswap_reg_ptr(&mut r{j - num_slice}, base, {i});")
 
     lines.append("")
     lines.append("    match tail_len {")
     lines.append("        0 => {}")
-    for tl in range(1, num_regs + 1):
-        stores = " ".join([f"*out.add({i}) = r{i};" for i in range(tl)])
-        lines.append(f"        {tl} => {{ {stores} }}")
+    if microbench_variant:
+        for tail_len in range(1, num_regs + 1):
+            stores = " ".join(f"*out.add({i}) = r{i};" for i in range(tail_len))
+            lines.append(f"        {tail_len} => {{ {stores} }}")
+    else:
+        lines.append("        1 => *out.add(0) = r0,")
+        lines.append("        2 => { *out.add(0) = r0; *out.add(1) = r1; }")
+        lines.append("        3 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; }")
+        lines.append(
+            "        4 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; }"
+        )
+        lines.append(
+            "        5 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; }"
+        )
+        lines.append(
+            "        6 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; }"
+        )
+        lines.append(
+            "        7 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; }"
+        )
+        lines.append(
+            "        8 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; *out.add(7) = r7; }"
+        )
     lines.append("        _ => unreachable!(),")
     lines.append("    }")
     lines.append("}")
-
     return "\n".join(lines)
 
 
@@ -334,24 +269,26 @@ def main():
     output.append("")
     output.append("// Internal tail4 variants for pad-up ranges (to reduce live regs/spills).")
     output.append(
-        emit_hybrid_sort_tail_out_var_regs(
+        emit_hybrid_sort_tail_out(
             networks,
             key="16",
             fn_name="sort16_tail_out_12_4",
             num_slice=12,
             num_regs=4,
             vis="pub(crate)",
+            microbench_variant=True,
         )
     )
     output.append("")
     output.append(
-        emit_hybrid_sort_tail_out_var_regs(
+        emit_hybrid_sort_tail_out(
             networks,
             key="24",
             fn_name="sort24_tail_out_20_4",
             num_slice=20,
             num_regs=4,
             vis="pub(crate)",
+            microbench_variant=True,
         )
     )
     output.append(emit_tests())
