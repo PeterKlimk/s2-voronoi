@@ -1354,6 +1354,13 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Extending reserved unchecked publication from the accepted cell-index stream to the three
+  shard-local vertex streams was not additive. It saved only another 0.04--0.05% instructions while
+  adding 0.30--0.34% branches; nine five-build native pairs regressed cycles 0.21% on uniform and
+  0.16% on Fibonacci despite about 0.6% fewer branch misses. The upper-bound reserve is paid for all
+  cells while only one third of vertices create local records. Keep ordinary pushes for vertices,
+  keys, and incidence, and reserve exactly only the mandatory one-index-per-vertex stream.
+
 - Replacing the reusable `Vec<EdgeToLater>` with a 24-entry fixed-capacity scratch removed its
   capacity branch and reduced native branches by 0.34--0.55% and instructions by 0.11--0.21% at 1M
   Fibonacci/uniform. It nevertheless raised branch misses 0.35--0.82% and cycles 0.40--0.59% in
