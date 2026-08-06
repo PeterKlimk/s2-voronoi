@@ -1454,6 +1454,14 @@ Do not broadly retry these without a materially different design or workload:
   bit iteration, random-position stores, and eager span fill cost more than the well-predicted
   original branch; retain ordered single-pass emission.
 
+- **Construction-bin scheduling:** telemetry-only clocks around each of the 96 bin tasks found the
+  retained largest-population-first order already keeps 16 workers 93.9--99.3% busy across five 4M
+  uniform runs (median 96.9%). Median per-bin duration correlated 0.981 with population and 0.983
+  with processed-neighbor count. A deterministic list-schedule simulation put the current population
+  order at 99.03% efficiency; even an oracle ordered by measured duration reached only 99.15%, a
+  roughly 0.12% makespan ceiling. Do not add weighted splitting or finer scheduling for uniform;
+  task-duration outliers are dominated by system noise rather than predictable algorithmic work.
+
 - **Uninitialized bin-assignment inverse arrays:** native 2.5M timing on the 16-core Ryzen showed
   that cell construction still scales about 11.1--11.3x from one to sixteen workers, while grid
   build scales only 3.8--4.0x and dedup 3.5--4.3x. From eight to sixteen workers, dedup rose from
@@ -1650,10 +1658,12 @@ Do not broadly retry these without a materially different design or workload:
   minor faults by 7--10%, but added 0.025% instructions/0.030% branches on Fibonacci and about
   0.005%/0.004% on uniform. The 4x form saved only 12--13 MB and 2--4% of faults while still adding
   roughly 0.006% Fibonacci instructions/branches; uniform was neutral. Six bins showed essentially
-  no RSS or counter effect. The current `ShardOutput` representation has since superseded this
-  experiment: position, key, and incidence vectors start empty and grow lazily, so there is no
-  longer a 6x live-dedup reserve factor to reduce. The exact per-cell index reservation is a
-  separate retained optimization.
+  no RSS or counter effect. A current 4M uniform/16-worker re-test after compact edge-check queues
+  reduced peak RSS by only about 3.9 MiB. Twenty interleaved pairs instead raised cycles 1.18% and
+  wall time 0.92% geometrically (only 5/20 and 6/20 favorable); instructions were +0.04%, while
+  branches fell 0.07%. Retain the 6x position/key/incidence reserve: the target no longer realizes
+  the archived memory saving, and the smaller capacity is a repeatable throughput loss. The exact
+  per-cell index reservation is a separate retained optimization.
 - Packing `DeferredSlot`'s `(source_bin: u8, source_slot: u32)` into a `u64` does not shrink the
   32-byte record: the key and position consume 24 bytes and the packed field raises alignment to
   eight. Packing both into `u32` could reach 28 bytes but would reduce the source-slot range to 24
