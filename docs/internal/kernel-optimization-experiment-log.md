@@ -663,3 +663,35 @@ No production source change remains from this audit. A credible next clipping ex
 remove survivor/output work or alter broader batch/outcome dataflow; it must not merely pack the
 strict divisions, flatten dispatch, add a transition lookup, or remove the dominant empty-mask
 skip.
+
+
+### Diagnostic publication scope — instruction wins do not survive control/locality gates (2026-08-07)
+
+The production assembly exposed two stores before every accepted stream clip: one packed neighbor
+word and one source-kind byte for the unexpected-failure diagnostic trail. The trace is observed
+only after cell construction, so several exact variants moved those publications to batch or stream
+boundaries. No arithmetic or clipping decision changed. Equal-length aliases showed why the two
+small stores remain preferable:
+
+- Batch-local `Option` state removed about 0.53% of pinned uniform instructions, but added 0.69%
+  branches and 1.06% branch misses; cycles were neutral-to-worse. On 500k clustered it added 0.43%
+  instructions and 1.98% branches because short/empty-after-dedup shell batches paid the boundary
+  control disproportionately.
+- Unconditionally carrying the prior fields through each batch removed 0.62% of pinned uniform
+  instructions and improved 4M uniform/16-worker cycles by 0.50%, but regressed clustered
+  instructions by 0.24% and branches by 1.43%. It converted per-attempt publication into fixed
+  per-batch work, which is the wrong trade for that guardrail.
+- Deferring only the invariant packed source-kind byte avoided the clustered regression and reduced
+  pinned uniform/Fibonacci instructions by 0.21%/0.16%. Nevertheless, twenty physical-core 4M
+  uniform pairs measured cycles +0.47% (only 4/20 favorable) and branch misses +0.21%, despite
+  instructions -0.19% and neutral branches. Release code placement also moved materially, making
+  this a direct example of reduced stores losing at the all-core branch/locality gate.
+- Keeping shell publication unchanged while batching both fields only for packed sources still
+  added 0.66% pinned branches and 1.33% branch misses; pinned cycles rose 0.27% even though
+  instructions fell 0.60%.
+
+All forms preserved the failure-report state and passed the focused release cell-build tests; all
+were removed. Do not reintroduce batch-level diagnostic state unless it can avoid both an added
+boundary branch and unconditional work for short/deduplicated batches. More broadly, this closes
+trace publication as an isolated target: a larger control-flow change must earn its win independently
+of these two stores.
