@@ -598,3 +598,68 @@ the prior packed-intersection experiment reduced a small number of instructions 
 and lost cycles. The current profile supplies no new reason to reopen either that numerical contract
 or the rejected packing. Treat both leading leaves as composite/algorithmic targets: a future change
 needs to eliminate candidate or clipping work, not merely rearrange their instructions.
+
+
+### Production-release assembly audit — leaf seams and dependency gate (2026-08-07)
+
+The next audit used the actual production release codegen rather than treating the frame-pointer
+`profiled` build as an assembly oracle. The profiles differ materially: `[profile.profiled]` uses
+one codegen unit and exposes a roughly 21 KiB `build_and_emit_cell`, while the default release build
+keeps the hot work in separate leaf functions. A native release binary with line tables was copied
+before measurement, then sampled on a pinned 4M uniform, 16-worker, no-preprocess run. IBS operation
+samples and branch-miss samples ranked the production leaves as follows (percentages are whole-run,
+self-only):
+
+| Production leaf | Size | IBS operations | Branch misses |
+| --- | ---: | ---: | ---: |
+| `dispatch_clip` | 5,984 B | 8.16% | 11.95% |
+| `emit_cell_output` | 5,598 B | 7.21% | 11.10% |
+| `clip_batch_source::<false>` | 1,872 B | 5.92% | 11.08% |
+| `prepare_group_directed` | 12,968 B | 4.37% | 19.00% |
+| `emit_generator_group` | 5,256 B | 2.94% | 3.96% |
+| `to_vertex_data_full` | 5,247 B | 2.50% | 4.32% |
+
+This supersedes the earlier monolithic-symbol attribution for choosing assembly experiments; the
+older profile remains valid only as coarse phase evidence. Branch-event skid places many samples on
+neighboring arithmetic and loads, so the audit used regions and control-flow edges rather than
+claiming that every annotated non-branch instruction itself missed.
+
+The generated assembly gave four concrete gates:
+
+- `dispatch_clip` starts with the existing six-way size jump and then tests boundedness inside the
+  selected arm. Its twelve const-generic kernels remain direct code, not a twelve-target flattened
+  dispatch. Mixed clips use register-only transition discovery and a cyclic survivor loop. LLVM
+  deliberately computes the entry intersection before that loop and sinks the exit division to the
+  shared output tail.
+- `prepare_group_directed`'s largest miss region is the useful `mask0 | mask1 == 0` skip around two
+  resident-major AVX2 chunks. The zero case immediately advances the query loop; removing that
+  data-dependent branch would instead execute mask extraction/publication for the dominant empty
+  case. Candidate loads and query broadcasts are already hoisted into the resident-major shape.
+- `emit_cell_output`'s largest miss edge is the local-owner versus deferred-owner split after the
+  resolved-index fast path. The surrounding assembly already has exact reserve, unchecked index
+  publication, and direct local incidence updates. This is the same semantic split targeted by the
+  rejected partitioned-emission family, not a newly exposed bounds check.
+- `to_vertex_data_full` already packs x/y chart reconstruction into `xmm`, keeps z scalar, normalizes
+  x/y together, implements `sort3_u32` with conditional moves, and publishes into spare capacity.
+  The remaining scalar square root/divide is one normalization per emitted vertex and is not an
+  accidental scalarization.
+
+One assembly-driven dependency experiment was checked and removed. Replacing the two scalar
+intersection divisions with an exact `wide::f64x2` divide forced one `vdivpd` per small-N kernel and
+made both parameters available before survivor publication. It replaced 14 static `vdivsd`
+instructions with 12 `vdivpd` instructions, but added unpacking, grew `dispatch_clip` by 173 bytes
+(and executable text by 188 bytes), and increased pinned 1M work:
+
+| Workload (15/12 alternating pairs, 4 repeats) | Cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| uniform | +0.584% | +0.093% | -0.002% | -0.242% |
+| Fibonacci | +0.867% | +0.097% | -0.004% | -0.076% |
+
+The cycle result was unfavorable in 13/15 uniform pairs and all 12 Fibonacci pairs. This confirms
+the archived packed-intersection disposition with production-release assembly and equal-length
+aliases: exposing division overlap is not enough to offset vector-divide and packing costs.
+
+No production source change remains from this audit. A credible next clipping experiment must
+remove survivor/output work or alter broader batch/outcome dataflow; it must not merely pack the
+strict divisions, flatten dispatch, add a transition lookup, or remove the dominant empty-mask
+skip.
