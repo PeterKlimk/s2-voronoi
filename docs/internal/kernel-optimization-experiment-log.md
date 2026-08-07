@@ -834,3 +834,38 @@ primary all-core gate, so further 4M Fibonacci/clustered runs and full retention
 warranted; all production code was removed. A permanent bounded phase needs to discard meaningful
 builder representation or clipping work in addition to one predicate. Monotonicity by itself is
 not enough.
+
+
+### Resolution/final-emission fusion — rejected (2026-08-07)
+
+ARCH-ASM-005 first closed the ordering question. An incoming check for an earlier neighbor can patch
+either endpoint of its edge, and a later edge in the cycle can therefore update a vertex encountered
+earlier in edge order. The mixed owner/deferred emission pass must not commit local vertices until
+`collect_and_resolve_cell_edges` has processed the complete cycle. Outgoing later-cell and overflow
+checks in turn require those finalized local/deferred endpoint indices. Directly streaming edge
+resolution into owner emission would change last-write defect handling and is not legal under the
+current deterministic contract.
+
+The remaining legal fusion was implemented on native AVX2: keep complete-cycle resolution and the
+index vector, but forward each ordinary in-bin later-cell check as soon as the final owner loop had
+produced both consecutive endpoint indices. Ordered edge records used one cursor; first/previous
+keys and indices handled the cyclic edge. Any unexpected leftover record and all cross-bin overflow
+records retained the old readback path, preserving release behavior. Focused native release
+correctness and edge-reconciliation suites passed.
+
+Production assembly exposed why this was the wrong fusion. `emit_cell_output` grew from 5,459 to
+6,720 bytes and executable text grew 2,288 bytes. Removing the compact later-edge loop inserted a
+cursor/end-edge decision into every emitted vertex and lengthened the mixed owner loop's live state.
+Equal-length aliases measured:
+
+| Workload | Cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| pinned 1M uniform, 15 pairs ×4 | +2.96% (0/15) | +4.00% | +4.00% | +0.35% |
+| pinned 1M Fibonacci, 8 pairs ×4 | +2.64% (0/8) | +4.15% | +4.32% | +0.82% |
+| 4M uniform, 16 workers, 8 pairs | +2.89% (0/8) | +3.79% | +3.73% | +0.69% |
+
+The candidate failed both pinned gates and the primary all-core gate decisively, so larger control
+runs and full retention validation were unnecessary; all production code was removed. The existing
+post-resolution loops are short and proportional only to outgoing edges. Folding them into the
+all-vertex owner loop increases steady-state control and live endpoints rather than removing useful
+work.

@@ -89,16 +89,24 @@ current status and concise disposition here.
 
 ### ARCH-ASM-005 — Fuse resolution with final emission
 
-- **Status:** In progress
-- **Hypothesis:** Avoid filling `scratch.vertex_indices` and then zipping it with the output buffer.
-  Resolve and publish finalized endpoints directly if deferred and cross-bin contracts do not
-  require complete-cycle index materialization.
-- **First step:** Prove which resolution decisions are edge-local and which require the complete
-  cycle.
+- **Status:** Completed — rejected
+- **Dependency result:** Incoming earlier-edge checks can patch either endpoint, including vertices
+  visited before a later edge, so final owner emission cannot begin until the complete edge cycle
+  has resolved. Deferred slots and outgoing checks also require final cell-local indices.
+- **Experiment:** The legal partial fusion forwarded ordinary later-cell checks immediately after
+  finalizing each endpoint pair, retaining the complete index cycle and overflow fallback. It
+  removed the later-check readback traversal but added a cursor test and live first/previous
+  endpoints to every vertex.
+- **Production gate:** `emit_cell_output` grew 1,261 bytes and executable text grew 2,288 bytes.
+  Pinned uniform/Fibonacci cycles regressed 2.96%/2.64%; 4M uniform/16-worker cycles regressed 2.89%
+  (0/8 favorable). The candidate was removed.
+- **Reopening boundary:** Complete-cycle resolution is mandatory. Revisit only with a representation
+  that removes both index materialization and per-vertex cursor control; do not interleave outgoing
+  forwarding with the current mixed owner loop again.
 
 ### ARCH-ASM-006 — Separate hot success state from cold diagnostics
 
-- **Status:** Queued
+- **Status:** In progress
 - **Hypothesis:** Represent the ordinary success path with compact state and enter a cold
   continuation only for fallback, allocation failure, or unexpected diagnostics. Reduce hot frame
   size and spills in `clip_batch_source`, `emit_generator_group`, and `emit_cell_output`.
