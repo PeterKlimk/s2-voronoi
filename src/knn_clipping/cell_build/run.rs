@@ -8,7 +8,7 @@ use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
 use crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES;
-use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderFallbackTrigger, BuilderStepOutcome};
+use crate::knn_clipping::topo2d::{BuilderFallbackTrigger, BuilderStepOutcome};
 use crate::live_dedup::EdgeCheck;
 use crate::policy::PackedNeighborPolicy;
 
@@ -559,31 +559,126 @@ fn should_clip_neighbor<const SHELL: bool>(
     }
 }
 
-/// Source-specialized batch loop. `SHELL` removes the invariant source match
-/// from each candidate while retaining one dispatch per exact batch above.
+/// Result of one direct builder clip without the outer builder-mode branch.
+enum DirectClipOutcome {
+    Applied(crate::knn_clipping::topo2d::types::ClipResult),
+    NeedsFallback(BuilderFallbackTrigger),
+    Failed,
+}
+
+trait DirectStreamBuilder {
+    #[cfg(test)]
+    const GNOMONIC: bool;
+
+    fn clip_stream_neighbor(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> DirectClipOutcome;
+    fn stream_is_bounded(&self) -> bool;
+    fn stream_can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool;
+}
+
+impl DirectStreamBuilder for crate::knn_clipping::topo2d::builder::GnomonicBuilder {
+    #[cfg(test)]
+    const GNOMONIC: bool = true;
+
+    #[inline(always)]
+    fn clip_stream_neighbor(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> DirectClipOutcome {
+        match self.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor) {
+            Ok(result) => DirectClipOutcome::Applied(result),
+            Err(failure) => {
+                match crate::knn_clipping::topo2d::Topo2DBuilder::fallback_trigger_for_failure(
+                    failure,
+                ) {
+                    Some(trigger) => DirectClipOutcome::NeedsFallback(trigger),
+                    None => DirectClipOutcome::Failed,
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn stream_is_bounded(&self) -> bool {
+        self.is_bounded()
+    }
+
+    #[inline(always)]
+    fn stream_can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+        self.can_terminate(max_unseen_dot_bound)
+    }
+}
+
+impl DirectStreamBuilder for crate::knn_clipping::topo2d::builder::FallbackBuilder {
+    #[cfg(test)]
+    const GNOMONIC: bool = false;
+
+    #[inline(always)]
+    fn clip_stream_neighbor(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> DirectClipOutcome {
+        match self.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor) {
+            Ok(result) => DirectClipOutcome::Applied(result),
+            Err(_) => DirectClipOutcome::Failed,
+        }
+    }
+
+    #[inline(always)]
+    fn stream_is_bounded(&self) -> bool {
+        self.is_bounded()
+    }
+
+    #[inline(always)]
+    fn stream_can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+        self.can_terminate(max_unseen_dot_bound)
+    }
+}
+
+enum DirectBatchStop {
+    Complete(usize),
+    SwitchToFallback {
+        next_pos: usize,
+        prefix_consumed: usize,
+        trigger: BuilderFallbackTrigger,
+        forced: bool,
+    },
+}
+
+/// Run one contiguous batch segment against a builder whose mode is fixed for
+/// the whole call. The ordinary gnomonic path therefore carries no
+/// per-neighbor `BuilderImpl` discriminant branch.
 #[allow(clippy::too_many_arguments)]
-fn clip_batch_source<const SHELL: bool>(
-    phase: &mut StreamPhase<'_>,
+fn clip_batch_direct<const SHELL: bool, B: DirectStreamBuilder>(
+    builder: &mut B,
+    packed_chunk: &[u32],
+    attempted_neighbors: &mut AttemptedNeighbors,
     batch: crate::cube_grid::DirectedNeighborBatch,
-    points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
     generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
-) {
-    let packed_chunk = &phase.packed_chunk[..batch.n];
+    start_pos: usize,
+    #[cfg(test)] force_fallback_after_neighbors_processed: &mut Option<usize>,
+) -> DirectBatchStop {
     let last_clip_kind = LastClipKind::from_batch_source(batch.source);
-    let mut prefix_consumed = 0usize;
-    for pos in 0..batch.n {
+    let mut prefix_consumed = start_pos;
+    for pos in start_pos..batch.n {
         prefix_consumed = pos + 1;
         let neighbor_slot = packed_chunk[pos];
-        // One fused load gets both the global index and the position (one cache
-        // line) instead of two separate random by-slot loads.
+        // One fused load gets both the global index and position from the
+        // slot-ordered AoS instead of two scattered by-slot loads.
         let slot_point = pos_slots[neighbor_slot as usize];
         let neighbor_idx = slot_point.idx as usize;
-        // Packed preparation excludes the query slot from center and ring
-        // candidates. Only shell takeover can rediscover the generator.
         if SHELL {
             if neighbor_idx == generator_idx {
                 continue;
@@ -595,33 +690,29 @@ fn clip_batch_source<const SHELL: bool>(
             );
         }
 
-        let should_clip =
-            should_clip_neighbor::<SHELL>(phase.attempted_neighbors, neighbor_slot as usize);
-        if !should_clip {
+        if !should_clip_neighbor::<SHELL>(attempted_neighbors, neighbor_slot as usize) {
             continue;
         }
 
         trace.record_stream(slot_point.idx, neighbor_slot, last_clip_kind);
-
-        // Position from the fused record loaded above (spatial order → clustered,
-        // cache-friendly); bit-identical to points[neighbor_idx].
-        let neighbor = slot_point.pos;
-        let (clip_result, fallback_rejected) =
-            match phase
-                .builder
-                .clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)
-            {
-                Ok(BuilderClipOutcome::Applied(result)) => (result, false),
-                Ok(BuilderClipOutcome::NeedsFallback(trigger)) => {
+        let clip_result =
+            match builder.clip_stream_neighbor(neighbor_idx, neighbor_slot, slot_point.pos) {
+                DirectClipOutcome::Applied(result) => result,
+                DirectClipOutcome::NeedsFallback(trigger) => {
                     trace.fallback_trigger = Some(trigger);
                     counters.record_fallback(trigger);
-                    let rejected = !phase.builder.try_enter_fallback(points, trigger);
-                    (
-                        crate::knn_clipping::topo2d::types::ClipResult::Changed,
-                        rejected,
-                    )
+                    counters.neighbors_processed += 1;
+                    counters
+                        .telemetry_detail
+                        .record_progress(counters.neighbors_processed);
+                    return DirectBatchStop::SwitchToFallback {
+                        next_pos: pos + 1,
+                        prefix_consumed,
+                        trigger,
+                        forced: false,
+                    };
                 }
-                Err(_) => break,
+                DirectClipOutcome::Failed => return DirectBatchStop::Complete(prefix_consumed),
             };
 
         counters.neighbors_processed += 1;
@@ -630,30 +721,31 @@ fn clip_batch_source<const SHELL: bool>(
                 .telemetry_detail
                 .record_progress(counters.neighbors_processed);
         }
-        if fallback_rejected {
-            break;
-        }
+
         #[cfg(test)]
-        maybe_force_fallback(
-            phase.builder,
-            phase.force_fallback_after_neighbors_processed,
-            points,
-            counters.neighbors_processed,
-            &mut trace.fallback_trigger,
-        );
+        if B::GNOMONIC {
+            if let Some(target) = *force_fallback_after_neighbors_processed {
+                if counters.neighbors_processed >= target {
+                    let trigger = BuilderFallbackTrigger::ProjectionLimit;
+                    trace.fallback_trigger = Some(trigger);
+                    *force_fallback_after_neighbors_processed = None;
+                    return DirectBatchStop::SwitchToFallback {
+                        next_pos: pos + 1,
+                        prefix_consumed,
+                        trigger,
+                        forced: true,
+                    };
+                }
+            }
+        }
 
-        // All batch sources are sorted, so mid-batch bounds are sound; only
-        // re-check when a clip left the polygon unchanged.
-        let should_check_termination =
-            clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged;
-
-        if phase.builder.is_bounded() && should_check_termination {
+        if builder.stream_is_bounded()
+            && clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
+        {
             let bound = if pos + 1 < batch.n {
                 let next_slot = packed_chunk[pos + 1];
-                // Next neighbor's position from the slot-ordered AoS (clustered,
-                // and consistent with the main gather above — points[next] would
-                // be a cold scattered read into the otherwise-unused points[]);
-                // bit-identical to points[point_indices[next_slot]].
+                // The next position comes from the same clustered AoS; this
+                // exact successor plus `unseen_bound` covers the full remainder.
                 let next = pos_slots[next_slot as usize].pos;
                 let next_dot = crate::fp::dot3_f32(
                     generator.x,
@@ -663,13 +755,11 @@ fn clip_batch_source<const SHELL: bool>(
                     next.y,
                     next.z,
                 );
-                // The remainder bound must cover both the rest of this sorted
-                // batch and everything after the batch, for every source.
                 complete_exact_bound(next_dot, batch.unseen_bound)
             } else {
                 batch.unseen_bound
             };
-            if phase.builder.can_terminate(bound) {
+            if builder.stream_can_terminate(bound) {
                 #[cfg(test)]
                 counters.record_termination_checkpoint(match batch.source {
                     DirectedNeighborBatchSource::ShellExpand => TerminationCheckpoint::Shell,
@@ -687,6 +777,92 @@ fn clip_batch_source<const SHELL: bool>(
             }
         }
     }
+    DirectBatchStop::Complete(prefix_consumed)
+}
+
+/// Source-specialized batch loop. Builder mode is selected once per segment;
+/// a rare gnomonic fallback request transfers the unconsumed suffix to the
+/// fallback specialization.
+#[allow(clippy::too_many_arguments)]
+fn clip_batch_source<const SHELL: bool>(
+    phase: &mut StreamPhase<'_>,
+    batch: crate::cube_grid::DirectedNeighborBatch,
+    points: &[Vec3],
+    pos_slots: &[crate::cube_grid::SlotPoint],
+    generator_idx: usize,
+    generator: Vec3,
+    trace: &mut BuildTrace,
+    counters: &mut BuildCounters,
+) {
+    let packed_chunk = &phase.packed_chunk[..batch.n];
+    let mut start_pos = 0usize;
+    let prefix_consumed;
+
+    loop {
+        let stop = if phase.builder.is_fallback() {
+            let builder = phase
+                .builder
+                .fallback_builder_mut()
+                .expect("fallback mode must expose fallback builder");
+            clip_batch_direct::<SHELL, _>(
+                builder,
+                packed_chunk,
+                phase.attempted_neighbors,
+                batch,
+                pos_slots,
+                generator_idx,
+                generator,
+                trace,
+                counters,
+                start_pos,
+                #[cfg(test)]
+                phase.force_fallback_after_neighbors_processed,
+            )
+        } else {
+            let builder = phase
+                .builder
+                .gnomonic_builder_mut()
+                .expect("gnomonic mode must expose gnomonic builder");
+            clip_batch_direct::<SHELL, _>(
+                builder,
+                packed_chunk,
+                phase.attempted_neighbors,
+                batch,
+                pos_slots,
+                generator_idx,
+                generator,
+                trace,
+                counters,
+                start_pos,
+                #[cfg(test)]
+                phase.force_fallback_after_neighbors_processed,
+            )
+        };
+
+        match stop {
+            DirectBatchStop::Complete(prefix) => {
+                prefix_consumed = prefix;
+                break;
+            }
+            DirectBatchStop::SwitchToFallback {
+                next_pos,
+                prefix_consumed: prefix,
+                trigger,
+                forced,
+            } => {
+                let entered = phase.builder.try_enter_fallback(points, trigger);
+                if forced {
+                    debug_assert!(entered);
+                }
+                if !entered {
+                    prefix_consumed = prefix;
+                    break;
+                }
+                start_pos = next_pos;
+            }
+        }
+    }
+
     counters
         .telemetry_detail
         .record_packed_batch_usage(batch.source, batch.n, prefix_consumed);

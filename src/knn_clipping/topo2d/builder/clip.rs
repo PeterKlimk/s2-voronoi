@@ -67,7 +67,7 @@ impl GnomonicBuilder {
     }
 
     #[inline(always)]
-    pub(super) fn clip_with_slot_result(
+    pub(crate) fn clip_with_slot_result(
         &mut self,
         neighbor_idx: usize,
         neighbor_slot: u32,
@@ -353,7 +353,7 @@ impl FallbackBuilder {
             .map(|_| ())
     }
 
-    pub(super) fn clip_with_slot_result(
+    pub(crate) fn clip_with_slot_result(
         &mut self,
         neighbor_idx: usize,
         neighbor_slot: u32,

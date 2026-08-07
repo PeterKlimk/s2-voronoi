@@ -43,16 +43,25 @@ current status and concise disposition here.
 
 ### ARCH-ASM-002 — Separate gnomonic and fallback stream phases
 
-- **Status:** In progress
-- **Hypothesis:** Consume the ordinary stream through a gnomonic-only loop until a fallback request,
-  then transfer the remainder to a cold fallback loop. Remove per-neighbor builder-mode/result
-  machinery and shrink the dominant hot leaf.
-- **Constraint:** The split must cover the stream phase, not merely outline one helper around the
-  existing per-neighbor enum branch.
+- **Status:** Completed — retained
+- **Result:** Select the concrete builder once per batch segment and monomorphize the stream loop for
+  gnomonic and fallback builders. A fallback request ends the gnomonic segment, converts the
+  builder, and resumes only the unconsumed suffix. Production assembly removes the builder-mode
+  discriminant from the per-neighbor backedge while preserving one outer mode check.
+- **Production gate:** 4M uniform/16-worker cycles -0.25% over 20 physical pairs (13/20 favorable),
+  instructions -0.99%, branches -2.23%, and branch misses -0.43%. Twelve three-build wall pairs
+  measured cycles/time -0.19%. Pinned uniform/Fibonacci, 4M Fibonacci, and clustered controls were
+  favorable; clustered cycles fell 1.59%.
+- **Validation:** Full release and checked suites, clippy, formatting, native wide/scalar matching
+  fingerprints, and generic-target uniform/Fibonacci controls passed. The production hot leaf grew
+  407 bytes and executable text grew 840 bytes, an accepted cost for removing repeated control.
+- **Reopening boundary:** Explicitly outlining the fallback monomorph shrank the hot leaf by 184
+  bytes but regressed pinned uniform cycles 0.54%; keep the compiler-integrated split unless a new
+  phase representation removes more state or code rather than changing placement alone.
 
 ### ARCH-ASM-003 — Combine clipping and termination certification
 
-- **Status:** Queued
+- **Status:** In progress
 - **Hypothesis:** Let the bounded clip operation consume the exact successor/unseen bound and return
   only continue, terminate, or a cold exceptional outcome. Avoid returning `ClipResult` and then
   reopening builder state for boundedness and termination.

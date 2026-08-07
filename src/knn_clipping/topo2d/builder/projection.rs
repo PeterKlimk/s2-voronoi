@@ -248,7 +248,7 @@ impl GnomonicBuilder {
     }
 
     #[inline]
-    pub(super) fn is_bounded(&self) -> bool {
+    pub(crate) fn is_bounded(&self) -> bool {
         !self.current_poly().has_bounding_ref()
     }
 
@@ -274,7 +274,7 @@ impl GnomonicBuilder {
             .map(|constraint| constraint.neighbor_idx)
     }
 
-    pub(super) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+    pub(crate) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
             return false;
         }
@@ -322,7 +322,7 @@ impl GnomonicBuilder {
 
 impl FallbackBuilder {
     #[inline]
-    pub(super) fn is_bounded(&self) -> bool {
+    pub(crate) fn is_bounded(&self) -> bool {
         self.computed_vertex_count() >= 3
     }
 
@@ -349,7 +349,7 @@ impl FallbackBuilder {
     }
 
     #[inline]
-    pub(super) fn can_terminate(&mut self, _max_unseen_dot_bound: f32) -> bool {
+    pub(crate) fn can_terminate(&mut self, _max_unseen_dot_bound: f32) -> bool {
         false
     }
 }

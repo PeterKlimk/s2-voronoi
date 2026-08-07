@@ -734,3 +734,43 @@ aggregate cycles fell 0.75%; the primary physical-pair cycle result and robust b
 the acceptance. A first ungated form regressed generic pinned cycles despite reducing branches, so
 the fused preparation is intentionally native-AVX2-only and the generic storage/code path remains
 unchanged.
+
+
+### Builder-mode stream split — retained (2026-08-07)
+
+ARCH-ASM-002 moved builder-mode dispatch from every accepted neighbor to the batch-segment boundary.
+The shared source loop is monomorphized through a small direct-builder interface. An ordinary cell
+borrows its concrete `GnomonicBuilder` for the whole segment; if clipping requests fallback, the
+loop returns the triggering position, the outer `Topo2DBuilder` performs the existing exact replay,
+and a `FallbackBuilder` specialization resumes at the next position. Attempt marking, diagnostic
+trace order, fallback accounting, complete remainder bounds, unchanged-only termination checks,
+forced-fallback tests, and packed/shell prefix telemetry retain their prior ordering.
+
+Production native release assembly confirmed the intended mechanism. In
+`clip_batch_source::<false>`, the `BuilderImpl` sentinel comparison moved out of the candidate
+backedge: four sentinel comparisons in the prior leaf became one outer mode comparison. The leaf
+increased from 1,872 to 2,279 bytes and executable text increased 840 bytes because both direct
+loops remain available, while `dispatch_clip` stayed byte-for-byte the same size. This is code-size
+expansion rather than the hypothesized leaf shrink, but it removes repeated semantic control and
+passed the throughput gate. A follow-up `#[cold] #[inline(never)]` fallback wrapper reduced the hot
+leaf by 184 bytes but expanded total text further and regressed pinned uniform cycles 0.54% and
+instructions 0.23%; that placement-only variant was removed.
+
+Equal-length native aliases measured:
+
+| Workload | Cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| pinned 1M uniform, 15 pairs ×4 | -0.38% | -0.97% | -2.31% | -0.37% |
+| pinned 1M Fibonacci, 15 pairs ×4 | -0.38% | -0.68% | -1.44% | -0.17% |
+| 4M uniform, 16 workers, 20 pairs | -0.25% (13/20) | -0.99% | -2.23% | -0.43% |
+| 4M Fibonacci, 16 workers, 12 pairs | -0.17% | -0.65% | -1.37% | -0.56% |
+| 500k clustered, 16 workers, 12 pairs | -1.59% | -1.48% | -3.90% | -0.04% |
+
+Twelve 4M uniform wall pairs with three builds per invocation measured aggregate cycles and elapsed
+time -0.19%, with 7/12 elapsed pairs favorable. Generic pinned controls also passed: uniform cycles
+-0.72%, instructions -0.82%, and branches -2.21%; Fibonacci cycles -0.08%, instructions -0.56%,
+and branches -1.38%. The architectural gain therefore does not depend on AVX2 codegen.
+
+The full release and checked suites, `cargo clippy --all-targets`, formatting, and diff checks passed.
+Native wide and scalar fingerprints matched exactly:
+`0e65ca5dbe8fe07c`, semantic topology `961e56d915d09a4e`, 199,996 vertices, and 100,000 cells.

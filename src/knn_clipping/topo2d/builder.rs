@@ -285,10 +285,25 @@ impl Topo2DBuilder {
         }
     }
 
-    #[cfg(test)]
     #[inline]
     pub(crate) fn is_fallback(&self) -> bool {
         matches!(self.inner, BuilderImpl::Fallback(_))
+    }
+
+    #[inline]
+    pub(crate) fn gnomonic_builder_mut(&mut self) -> Option<&mut GnomonicBuilder> {
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => Some(builder),
+            BuilderImpl::Fallback(_) => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn fallback_builder_mut(&mut self) -> Option<&mut FallbackBuilder> {
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(_) => None,
+            BuilderImpl::Fallback(builder) => Some(builder),
+        }
     }
 
     #[cfg(test)]
