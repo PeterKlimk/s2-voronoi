@@ -1,6 +1,6 @@
 # Assembly-driven architecture experiment checklist
 
-Status: active  
+Status: completed
 Opened: 2026-08-07  
 Primary workload: native AVX2, 4M uniform points, 16 physical workers, `--no-preprocess`
 
@@ -13,15 +13,15 @@ current status and concise disposition here.
 
 ## Required gate for every item
 
-- [ ] Inspect native production-release assembly before benchmarking.
-- [ ] Preserve exact clipping, ownership, output ordering, diagnostics, and deterministic results.
-- [ ] Compare manually copied binaries through equal-length aliases.
-- [ ] Check pinned 1M uniform and Fibonacci counters first.
-- [ ] Use 4M uniform/16-worker cycles and wall time as the primary acceptance gate.
-- [ ] Check 4M Fibonacci and 500k clustered controls for credible candidates.
-- [ ] Confirm generic-target behavior and executable codegen isolation where target-specific.
-- [ ] Run focused correctness tests, then the full release/checked/clippy/fmt gate before retaining.
-- [ ] Record the disposition and remove rejected production code.
+- [x] Inspect native production-release assembly before benchmarking.
+- [x] Preserve exact clipping, ownership, output ordering, diagnostics, and deterministic results.
+- [x] Compare manually copied binaries through equal-length aliases.
+- [x] Check pinned 1M uniform and Fibonacci counters first.
+- [x] Use 4M uniform/16-worker cycles and wall time as the primary acceptance gate.
+- [x] Check 4M Fibonacci and 500k clustered controls for credible candidates.
+- [x] Confirm generic-target behavior and executable codegen isolation where target-specific.
+- [x] Run focused correctness tests, then the full release/checked/clippy/fmt gate before retaining.
+- [x] Record the disposition and remove rejected production code.
 
 ## Experiments
 
@@ -106,12 +106,21 @@ current status and concise disposition here.
 
 ### ARCH-ASM-006 — Separate hot success state from cold diagnostics
 
-- **Status:** In progress
-- **Hypothesis:** Represent the ordinary success path with compact state and enter a cold
-  continuation only for fallback, allocation failure, or unexpected diagnostics. Reduce hot frame
-  size and spills in `clip_batch_source`, `emit_generator_group`, and `emit_cell_output`.
-- **Acceptance condition:** Assembly must show a smaller hot frame, fewer hot spills, or removed
-  control work. Outlining alone is not sufficient.
+- **Status:** Completed — retained
+- **Result:** Replace three always-live `usize` fallback counters in build/stat state with one
+  compact fallback code carried beside the already-required diagnostic trigger, plus one recovery
+  flag. Decode the three telemetry counters only at the telemetry publication seam. The state
+  machine can record at most one ordinary fallback: it either installs the fallback builder or
+  terminates the stream.
+- **Production gate:** `emit_generator_group`'s frame fell 16 bytes, the leaf shrank 44 bytes, and
+  executable text fell 168 bytes. 4M uniform/16-worker cycles improved 0.62% over 20 pairs (17/20
+  favorable) despite instructions +0.36%; 4M Fibonacci improved 0.63% and clustered improved 0.35%.
+  Twelve three-build wall pairs were neutral in cycles and 0.24% favorable in elapsed time.
+- **Validation:** Full release and checked suites, telemetry-feature unit tests, clippy, formatting,
+  native wide/scalar matching fingerprints, and generic uniform/Fibonacci controls passed.
+- **Reopening boundary:** Do not re-expand rare fallback accounting into hot per-cell words. Further
+  cold separation must remove another live field or frame slot and pass the same latency gates;
+  outlining without state removal remains insufficient.
 
 ## Closed adjacent probes
 

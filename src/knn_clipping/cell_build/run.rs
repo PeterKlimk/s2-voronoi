@@ -146,9 +146,8 @@ pub(crate) struct CellBuildStats {
     neighbors_processed: usize,
     final_edges: usize,
     telemetry_detail: CellTelemetryDetail,
-    fallback_projection: usize,
-    fallback_polygon_cap: usize,
-    fallback_all_constraints: usize,
+    fallback_code: u8,
+    recovered_all_constraints: bool,
     incoming_seed_neighbors: usize,
     edgecheck_seed_clips: usize,
     knn_exhausted: bool,
@@ -173,10 +172,13 @@ enum TerminationCheckpoint {
 impl CellBuildStats {
     #[inline]
     pub(crate) fn record_into(&self, cell_telemetry: &mut crate::telemetry::CellTelemetryAccum) {
+        let (fallback_projection, fallback_polygon_cap, mut fallback_all_constraints) =
+            fallback_counts_from_code(self.fallback_code);
+        fallback_all_constraints += usize::from(self.recovered_all_constraints);
         cell_telemetry.add_fallbacks(
-            self.fallback_projection,
-            self.fallback_polygon_cap,
-            self.fallback_all_constraints,
+            fallback_projection,
+            fallback_polygon_cap,
+            fallback_all_constraints,
         );
         self.telemetry_detail
             .record_into(cell_telemetry, self.neighbors_processed);
@@ -272,6 +274,28 @@ pub(super) struct BuildTrace {
     last_neighbor: u64,
     last_clip_kind: LastClipKind,
     fallback_trigger: Option<BuilderFallbackTrigger>,
+    // One-shot state: success installs FallbackBuilder and rejection stops the
+    // stream, so no cell can record a second ordinary fallback transition.
+    fallback_code: u8,
+}
+
+#[inline]
+fn fallback_code(trigger: BuilderFallbackTrigger) -> u8 {
+    match trigger {
+        BuilderFallbackTrigger::ProjectionLimit => 1,
+        BuilderFallbackTrigger::PolygonVertexLimit => 2,
+        BuilderFallbackTrigger::ClippedAway => 3,
+    }
+}
+
+#[inline]
+fn fallback_counts_from_code(code: u8) -> (usize, usize, usize) {
+    match code {
+        1 => (1, 0, 0),
+        2 => (0, 1, 0),
+        3 => (0, 0, 1),
+        _ => (0, 0, 0),
+    }
 }
 
 impl BuildTrace {
@@ -280,6 +304,7 @@ impl BuildTrace {
             last_neighbor: 0,
             last_clip_kind: LastClipKind::None,
             fallback_trigger: None,
+            fallback_code: 0,
         }
     }
 
@@ -293,6 +318,13 @@ impl BuildTrace {
     fn record_stream(&mut self, neighbor_idx: u32, neighbor_slot: u32, kind: LastClipKind) {
         self.last_neighbor = (u64::from(neighbor_idx) << 32) | u64::from(neighbor_slot);
         self.last_clip_kind = kind;
+    }
+
+    #[inline]
+    fn record_fallback(&mut self, trigger: BuilderFallbackTrigger) {
+        debug_assert_eq!(self.fallback_code, 0, "fallback can be entered only once");
+        self.fallback_trigger = Some(trigger);
+        self.fallback_code = fallback_code(trigger);
     }
 
     pub(super) fn last_neighbor_idx(&self) -> Option<usize> {
@@ -324,9 +356,7 @@ pub(super) struct BuildCounters {
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
     telemetry_detail: BuildTelemetryDetail,
-    fallback_projection: usize,
-    fallback_polygon_cap: usize,
-    fallback_all_constraints: usize,
+    recovered_all_constraints: bool,
     terminated: bool,
     #[cfg(test)]
     termination_checkpoint: Option<TerminationCheckpoint>,
@@ -344,9 +374,7 @@ impl BuildCounters {
             packed_tail_used: false,
             packed_safe_exhausted: false,
             telemetry_detail: BuildTelemetryDetail::new(),
-            fallback_projection: 0,
-            fallback_polygon_cap: 0,
-            fallback_all_constraints: 0,
+            recovered_all_constraints: false,
             terminated: false,
             #[cfg(test)]
             termination_checkpoint: None,
@@ -365,14 +393,15 @@ impl BuildCounters {
         self.packed_safe_exhausted |= stream.packed_safe_exhausted();
         self.knn_exhausted |= stream.knn_exhausted();
     }
+}
 
-    fn record_fallback(&mut self, trigger: BuilderFallbackTrigger) {
-        match trigger {
-            BuilderFallbackTrigger::ProjectionLimit => self.fallback_projection += 1,
-            BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
-            BuilderFallbackTrigger::ClippedAway => self.fallback_all_constraints += 1,
-        }
-    }
+#[cfg(test)]
+#[inline]
+fn fallback_counts(trace: &BuildTrace, counters: &BuildCounters) -> (usize, usize, usize) {
+    let (projection, polygon_cap, mut all_constraints) =
+        fallback_counts_from_code(trace.fallback_code);
+    all_constraints += usize::from(counters.recovered_all_constraints);
+    (projection, polygon_cap, all_constraints)
 }
 
 /// Rebuild an actually exhausted, still-synthetic cell from an unrestricted
@@ -475,8 +504,7 @@ fn clip_seed_neighbors(
             {
                 Ok(BuilderStepOutcome::Applied) => false,
                 Ok(BuilderStepOutcome::NeedsFallback(trigger)) => {
-                    trace.fallback_trigger = Some(trigger);
-                    counters.record_fallback(trigger);
+                    trace.record_fallback(trigger);
                     !ctx.builder.try_enter_fallback(points, trigger)
                 }
                 Err(_) => break,
@@ -699,8 +727,7 @@ fn clip_batch_direct<const SHELL: bool, B: DirectStreamBuilder>(
             match builder.clip_stream_neighbor(neighbor_idx, neighbor_slot, slot_point.pos) {
                 DirectClipOutcome::Applied(result) => result,
                 DirectClipOutcome::NeedsFallback(trigger) => {
-                    trace.fallback_trigger = Some(trigger);
-                    counters.record_fallback(trigger);
+                    trace.record_fallback(trigger);
                     counters.neighbors_processed += 1;
                     counters
                         .telemetry_detail
@@ -960,7 +987,7 @@ fn finish_cell(
                     counters,
                 );
                 if recovered {
-                    counters.fallback_all_constraints += 1;
+                    counters.recovered_all_constraints = true;
                     return Ok(());
                 }
             }
@@ -1069,9 +1096,8 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         telemetry_detail: counters
             .telemetry_detail
             .finish(counters.neighbors_processed),
-        fallback_projection: counters.fallback_projection,
-        fallback_polygon_cap: counters.fallback_polygon_cap,
-        fallback_all_constraints: counters.fallback_all_constraints,
+        fallback_code: trace.fallback_code,
+        recovered_all_constraints: counters.recovered_all_constraints,
         incoming_seed_neighbors: request.incoming_checks.len(),
         edgecheck_seed_clips: counters.edgecheck_seed_clips,
         knn_exhausted: counters.knn_exhausted,

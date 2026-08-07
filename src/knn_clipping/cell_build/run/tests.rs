@@ -1,9 +1,9 @@
 use super::failure::classify_terminal_failure;
 use super::fallback_detail;
 use super::{
-    build_cell_into, clip_batch, clip_seed_neighbors, consume_stream, finish_cell, probe_frontier,
-    should_clip_neighbor, AttemptedNeighbors, BuildCounters, BuildTrace, CellBuildContext,
-    CellBuildRequest, StreamPhase, TerminationCheckpoint,
+    build_cell_into, clip_batch, clip_seed_neighbors, consume_stream, fallback_counts, finish_cell,
+    probe_frontier, should_clip_neighbor, AttemptedNeighbors, BuildCounters, BuildTrace,
+    CellBuildContext, CellBuildRequest, StreamPhase, TerminationCheckpoint,
 };
 use crate::cube_grid::packed_knn::{
     PackedGroupInput, PackedKnnCellScratch, PackedKnnTelemetry, PreparedPackedGroupStatus,
@@ -338,6 +338,8 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
     } else {
         None
     };
+    let (fallback_projection, fallback_polygon_cap, fallback_all_constraints) =
+        fallback_counts(&trace, &counters);
     ProbeCell {
         generator: generator_idx,
         ok: result.is_ok(),
@@ -346,9 +348,9 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
         final_edges: ctx.output_buffer.vertices.len(),
         knn_exhausted: counters.knn_exhausted,
         bounded: ctx.builder.is_bounded(),
-        fallback_projection: counters.fallback_projection,
-        fallback_polygon_cap: counters.fallback_polygon_cap,
-        fallback_all_constraints: counters.fallback_all_constraints,
+        fallback_projection,
+        fallback_polygon_cap,
+        fallback_all_constraints,
         spherical_extract_vertices: spherical_extract.map(|(vertices, _)| vertices),
         spherical_extract_edges: spherical_extract.map(|(_, edges)| edges),
     }
@@ -528,6 +530,7 @@ fn probe_early_extraction_cell(
             .map(|(hit, _)| hit.clone())
     });
 
+    let (_, _, fallback_all_constraints) = fallback_counts(&trace, &counters);
     EarlyProbeCell {
         generator: generator_idx,
         ok: result.is_ok(),
@@ -535,7 +538,7 @@ fn probe_early_extraction_cell(
         neighbors_processed: counters.neighbors_processed,
         final_edges: ctx.output_buffer.vertices.len(),
         knn_exhausted: counters.knn_exhausted,
-        fallback_all_constraints: counters.fallback_all_constraints,
+        fallback_all_constraints,
         first_success,
         first_final_match,
         successes: successes.len(),
@@ -1257,7 +1260,8 @@ fn exhausted_chart_replays_discarded_horizon_constraints_spherically() {
     .expect("unrestricted spherical replay should recover the horizon cell");
 
     assert!(stats.knn_exhausted);
-    assert_eq!(stats.fallback_all_constraints, 1);
+    assert!(stats.recovered_all_constraints);
+    assert_eq!(stats.fallback_code, 0);
     assert!(ctx.builder.is_fallback());
     assert_eq!(ctx.output_buffer.vertices.len(), 3);
 

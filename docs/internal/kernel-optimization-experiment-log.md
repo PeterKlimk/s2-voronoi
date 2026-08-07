@@ -869,3 +869,47 @@ runs and full retention validation were unnecessary; all production code was rem
 post-resolution loops are short and proportional only to outgoing edges. Folding them into the
 all-vertex owner loop increases steady-state control and live endpoints rather than removing useful
 work.
+
+
+### Compact fallback accounting — retained (2026-08-07)
+
+ARCH-ASM-006 removed rare fallback accounting from the always-live success counters. The prior
+`BuildCounters` and `CellBuildStats` each carried three `usize` fields for projection-limit,
+polygon-cap, and all-constraints fallbacks. The ordinary state machine can record at most one
+builder fallback: a gnomonic request either installs `FallbackBuilder`, whose clips cannot request
+another transition, or rejection terminates the stream. The retained representation stores a
+one-byte code beside `BuildTrace`'s already-required diagnostic trigger. Exhaustion recovery remains
+a separate one-byte flag because it is a distinct path. Telemetry decodes the code at
+`CellBuildStats::record_into`; forced-fallback tests continue to update the diagnostic trigger
+without incrementing production fallback telemetry.
+
+Production native release assembly met the explicit state-removal gate. The
+`emit_generator_group` frame fell from 696 to 680 bytes and the leaf shrank from 5,256 to 5,212
+bytes; executable text fell 168 bytes. `emit_cell_output` was unchanged at 5,459 bytes. The packed
+stream leaf grew 17 bytes in its rare fallback continuation, while its 200-byte frame remained
+unchanged. This is an actual reduction in always-live orchestration state rather than outlining.
+
+Equal-length native aliases measured:
+
+| Workload | Cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| pinned 1M uniform, 15 pairs ×4 | -0.27% | +0.37% | +0.03% | neutral |
+| pinned 1M Fibonacci, 15 pairs ×4 | -0.37% | +0.28% | neutral | -0.04% |
+| 4M uniform, 16 workers, 20 pairs | -0.62% (17/20) | +0.36% | +0.02% | -0.23% |
+| 4M Fibonacci, 16 workers, 12 pairs | -0.63% (11/12) | +0.27% | neutral | -0.12% |
+| 500k clustered, 16 workers, 12 pairs | -0.35% (9/12) | +0.06% | +0.56% | -0.28% |
+
+Twelve three-build 4M uniform wall pairs were neutral in hardware cycles and improved elapsed time
+0.24% (7/12). The retained result intentionally accepts a small retired-instruction increase: the
+primary physical-pair latency result is strong, both large-distribution controls agree, clustered
+latency remains favorable, and the production frame/text mechanism is concrete. Generic pinned
+controls also passed, with cycles -0.46% on uniform and -0.29% on Fibonacci despite instructions
++0.31%/+0.22%.
+
+Validation passed with `cargo test --release`, `cargo test --profile checked`, telemetry-feature lib
+tests, `cargo clippy --all-targets`, formatting, and diff checks. Native wide and scalar fingerprints
+matched exactly: `0e65ca5dbe8fe07c`, semantic topology `961e56d915d09a4e`, 199,996 vertices, and
+100,000 cells.
+
+This closes the six-item assembly architecture checklist. ARCH-ASM-001, ARCH-ASM-002, and
+ARCH-ASM-006 are retained; ARCH-ASM-003, ARCH-ASM-004, and ARCH-ASM-005 were measured and removed.
