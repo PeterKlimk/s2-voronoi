@@ -1505,6 +1505,11 @@ outside this deliberately narrow re-audit.
   exact-mask branch; clustered input is the locality/code-size guardrail. The zero-mask path remains
   required for adversarial failure handling.
 
+  Reordering the small clipper's source checks to test all-inside before zero-inside did not create
+  that expected branch saving: LLVM canonicalized both source orders to byte-identical native and
+  generic executable `.text`, with identical `dispatch_clip` size. Keep the conventional zero-mask
+  failure check first rather than encode workload frequency in source that generates no code change.
+
 - Partitioning live vertex emission by a per-cell resolved-index mask removed the hot resolved/
   unresolved branch and reduced branch misses by about 0.63%. It first reserved the cell's complete
   index span, then iterated resolved and unresolved bitsets separately with `trailing_zeros`.
