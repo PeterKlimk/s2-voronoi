@@ -1476,6 +1476,15 @@ outside this deliberately narrow re-audit.
   all-core pairs. The current in-loop `is_bounded && unchanged` test lowers better than either extra
   phase transition; retain it unless the clip operation itself can be redesigned around phases.
 
+- Flattening `dispatch_clip`'s polygon-length match and per-arm boundedness branch into one combined
+  twelve-way jump-table key removed substantial retired control flow without improving latency. In
+  forty equal-alias, three-build 4M uniform pairs on sixteen physical workers, instructions fell
+  0.25% and branches 1.07% in every pair, but branch misses rose 0.95% and cycles were effectively
+  neutral (-0.10%, 24/40 favorable). Twenty-five of those pairs also had neutral average build time
+  (+0.001%, 14/25 favorable); pinned uniform/Fibonacci cycles were neutral. The larger indirect
+  target set exchanges predictable direct boundedness branches for harder indirect prediction.
+  Keep the nested dispatch.
+
 - Partitioning live vertex emission by a per-cell resolved-index mask removed the hot resolved/
   unresolved branch and reduced branch misses by about 0.63%. It first reserved the cell's complete
   index span, then iterated resolved and unresolved bitsets separately with `trailing_zeros`.
