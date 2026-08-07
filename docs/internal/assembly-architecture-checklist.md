@@ -75,16 +75,21 @@ current status and concise disposition here.
 
 ### ARCH-ASM-004 — Split stream consumption permanently at boundedness
 
-- **Status:** In progress
-- **Hypothesis:** Boundedness is monotonic. Move from an initial unbounded stream loop into a
-  bounded-only loop, removing repeated boundedness checks and bounding-reference tracking from the
-  steady state.
-- **Constraint:** This must specialize whole-stream control flow; the previously rejected isolated
-  bounded/unbounded clip-function split is not a reason to retry the same mechanism.
+- **Status:** Completed — rejected
+- **Result:** Separate unbounded and permanently bounded batch segments transferred immediately
+  after the first changed clip removed the bounding-reference check from the bounded loop, but
+  introduced another monomorphized loop and transition backedge.
+- **Production gate:** The packed leaf grew 886 bytes and executable text grew 2,176 bytes. Pinned
+  uniform/Fibonacci cycles regressed 0.52%/0.63%, instructions rose 0.13%/0.25%, and branches rose
+  about 0.8%. The 4M uniform/16-worker primary regressed 0.60% (2/12 favorable). The candidate was
+  removed before unnecessary large cross-distribution runs.
+- **Reopening boundary:** Boundedness monotonicity alone does not pay for a segment transition and
+  duplicated stream loop. Revisit only if bounded mode can also eliminate substantial polygon state
+  or clipping work, not just its repeated predicate.
 
 ### ARCH-ASM-005 — Fuse resolution with final emission
 
-- **Status:** Queued
+- **Status:** In progress
 - **Hypothesis:** Avoid filling `scratch.vertex_indices` and then zipping it with the output buffer.
   Resolve and publish finalized endpoints directly if deferred and cross-bin contracts do not
   require complete-cycle index materialization.

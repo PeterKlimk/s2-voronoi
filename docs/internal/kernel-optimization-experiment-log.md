@@ -806,3 +806,31 @@ primary repeated cycle sets and Fibonacci regression outweigh that noisier elaps
 candidate was removed. Returning a combined semantic outcome can reduce the visible hot leaf and
 retired instructions without removing any underlying certification work, so this interface-only
 form is closed.
+
+
+### Permanent bounded stream phase — rejected (2026-08-07)
+
+ARCH-ASM-004 instantiated separate unbounded and bounded direct stream loops. The unbounded loop
+checked boundedness only after a changed clip; on the first transition it returned the next batch
+position, and the outer phase resumed the suffix in a const-specialized bounded loop. Later batches
+selected bounded mode once at entry. The bounded loop omitted the bounding-reference predicate
+entirely and retained unchanged-only complete-bound termination. Fallback used a third
+non-terminating specialization. Focused release cell-build tests, including forced fallback and
+termination checkpoints, passed.
+
+The production assembly rejected the trade before broad validation. `clip_batch_source::<false>`
+grew from 2,279 to 3,165 bytes, the shell leaf grew from 2,355 to 3,365 bytes, and executable text
+grew 2,176 bytes. The extra phase transfer and loop bodies increased retired control rather than
+amortizing it:
+
+| Workload | Cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| pinned 1M uniform, 15 pairs ×4 | +0.52% (3/15) | +0.13% | +0.80% | -0.42% |
+| pinned 1M Fibonacci, 12 pairs ×4 | +0.63% (4/12) | +0.25% | +0.77% | -0.40% |
+| 4M uniform, 16 workers, 12 pairs | +0.60% (2/12) | +0.13% | +0.74% | +0.04% |
+
+All comparisons used equal-length native aliases. The candidate failed both pinned controls and the
+primary all-core gate, so further 4M Fibonacci/clustered runs and full retention validation were not
+warranted; all production code was removed. A permanent bounded phase needs to discard meaningful
+builder representation or clipping work in addition to one predicate. Monotonicity by itself is
+not enough.
