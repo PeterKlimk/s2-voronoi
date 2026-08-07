@@ -1485,6 +1485,15 @@ outside this deliberately narrow re-audit.
   target set exchanges predictable direct boundedness branches for harder indirect prediction.
   Keep the nested dispatch.
 
+- Passing dispatch state already loaded by `clip_convex` into the out-of-line `dispatch_clip` did not
+  remove end-to-end work. Passing both polygon length and boundedness removed both callee loads but
+  changed register allocation throughout the large function: fifteen equal-alias 4M/16-worker pairs
+  added 0.14% instructions, 0.04% branches, and 0.16% branch misses; cycles were neutral and average
+  build time rose 0.73%. Passing only length preserved the original function size and removed exactly
+  its entry load, but fifteen more pairs were likewise neutral (+0.006% cycles, +0.03%
+  instructions/branches, +0.19% build time). Pinned structural counters were neutral. Keep dispatch
+  state local; moving a cached load across this call boundary does not shorten the complete path.
+
 - Partitioning live vertex emission by a per-cell resolved-index mask removed the hot resolved/
   unresolved branch and reduced branch misses by about 0.63%. It first reserved the cell's complete
   index span, then iterated resolved and unresolved bitsets separately with `trailing_zeros`.
