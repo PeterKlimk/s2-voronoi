@@ -1494,6 +1494,17 @@ outside this deliberately narrow re-audit.
   instructions/branches, +0.19% build time). Pinned structural counters were neutral. Keep dispatch
   state local; moving a cached load across this call boundary does not shorten the complete path.
 
+  A temporary single-worker clipping census then measured the remaining mask-level opportunity. At
+  4M uniform, 40.57M clip attempts split into 6.77% radius-bound early-unchanged exits, 31.22%
+  all-inside small masks, 61.03% mixed small masks, and 0.98% polygons above eight vertices. The 4M
+  Fibonacci split was 10.78%/7.74%/81.48%/effectively zero; a 500k clustered control was
+  41.60%/36.25%/16.94%/5.21%. N=3--4 accounted for 49.1% of uniform and 59.8% of Fibonacci total
+  attempts, but no individual mixed `(N, mask)` exceeded 9.1% of mixed clips, and no zero-inside mask
+  occurred in these successful campaigns. A future mask-table design therefore has a broad uniform/
+  Fibonacci ceiling but must replace transition bookkeeping generically rather than add another
+  exact-mask branch; clustered input is the locality/code-size guardrail. The zero-mask path remains
+  required for adversarial failure handling.
+
 - Partitioning live vertex emission by a per-cell resolved-index mask removed the hot resolved/
   unresolved branch and reduced branch misses by about 0.63%. It first reserved the cell's complete
   index span, then iterated resolved and unresolved bitsets separately with `trailing_zeros`.
