@@ -53,15 +53,21 @@ impl GnomonicBuilder {
         #[cfg(any(test, debug_assertions))]
         buffer.edge_neighbor_globals.reserve(poly.len);
         buffer.edge_neighbor_slots.reserve(poly.len);
+        #[cfg(target_feature = "avx2")]
+        buffer.vertex_indices.reserve(poly.len);
 
         let vertices = buffer.vertices.spare_capacity_mut();
         #[cfg(any(test, debug_assertions))]
         let edge_neighbor_globals = buffer.edge_neighbor_globals.spare_capacity_mut();
         let edge_neighbor_slots = buffer.edge_neighbor_slots.spare_capacity_mut();
+        #[cfg(target_feature = "avx2")]
+        let vertex_indices = buffer.vertex_indices.spare_capacity_mut();
         debug_assert!(vertices.len() >= poly.len);
         #[cfg(any(test, debug_assertions))]
         debug_assert!(edge_neighbor_globals.len() >= poly.len);
         debug_assert!(edge_neighbor_slots.len() >= poly.len);
+        #[cfg(target_feature = "avx2")]
+        debug_assert!(vertex_indices.len() >= poly.len);
 
         let gen_idx = self.generator_idx as u32;
         for i in 0..poly.len {
@@ -117,7 +123,11 @@ impl GnomonicBuilder {
             let key = sort3_u32(gen_idx, n1, n2);
             // SAFETY: all three vectors were cleared and reserved for
             // `poly.len` immediately above; `i` is in `0..poly.len`.
-            unsafe { vertices.get_unchecked_mut(i).write((key, v_pos)) };
+            unsafe {
+                vertices.get_unchecked_mut(i).write((key, v_pos));
+                #[cfg(target_feature = "avx2")]
+                vertex_indices.get_unchecked_mut(i).write(u32::MAX);
+            }
 
             let edge_plane = poly.edge_planes[i];
             if edge_plane == INVALID_PLANE_ID {
@@ -150,6 +160,8 @@ impl GnomonicBuilder {
             #[cfg(any(test, debug_assertions))]
             buffer.edge_neighbor_globals.set_len(poly.len);
             buffer.edge_neighbor_slots.set_len(poly.len);
+            #[cfg(target_feature = "avx2")]
+            buffer.vertex_indices.set_len(poly.len);
         }
         // The incremental clip keeps vertex plane pairs and edge planes in
         // lockstep (a clip's entry/exit vertices carry the pair {crossed
@@ -494,6 +506,9 @@ impl FallbackBuilder {
             );
             let position = crate::types::canonical_vec3_from_dvec3(vertex.position);
             buffer.vertices.push((key, position));
+            #[cfg(target_feature = "avx2")]
+            #[cfg(target_feature = "avx2")]
+            buffer.vertex_indices.push(u32::MAX);
 
             let next = vertices[(i + 1) % vertices.len()];
             let Some(edge_plane) = self.shared_edge_constraint(vertex, next) else {
@@ -670,6 +685,8 @@ fn extract_all_constraints_cell(
     buffer.vertices.reserve(vertices.len());
     buffer.edge_neighbor_globals.reserve(vertices.len());
     buffer.edge_neighbor_slots.reserve(vertices.len());
+    #[cfg(target_feature = "avx2")]
+    buffer.vertex_indices.reserve(vertices.len());
 
     let gen_idx = generator_idx as u32;
     for (i, vertex) in vertices.iter().copied().enumerate() {
@@ -689,6 +706,8 @@ fn extract_all_constraints_cell(
             ),
             position,
         ));
+        #[cfg(target_feature = "avx2")]
+        buffer.vertex_indices.push(u32::MAX);
 
         let next = vertices[(i + 1) % vertices.len()];
         let Some(edge_plane) = shared_all_constraints_edge(vertex, next, constraints) else {

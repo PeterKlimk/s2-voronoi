@@ -23,6 +23,7 @@ fn exceeds_resolution_drift(representative: Vec3, local: Vec3) -> bool {
 pub(crate) struct EdgeScratch {
     edges_to_later: Vec<EdgeToLater>,
     edges_overflow: Vec<EdgeOverflowLocal>,
+    #[cfg(not(target_feature = "avx2"))]
     vertex_indices: Vec<u32>,
 }
 
@@ -50,10 +51,37 @@ impl EdgeScratch {
         Self {
             edges_to_later: Vec::new(),
             edges_overflow: Vec::new(),
+            #[cfg(not(target_feature = "avx2"))]
             vertex_indices: Vec::new(),
         }
     }
 
+    #[cfg(target_feature = "avx2")]
+    fn collect_and_resolve(
+        &mut self,
+        cell_idx: u32,
+        shard_ctx: &mut ShardContext<'_>,
+        output_buffer: &mut CellOutputBuffer,
+        slot_points: &[crate::cube_grid::SlotPoint],
+        assignment: &BinAssignment,
+        incoming_checks: Vec<EdgeCheck>,
+    ) {
+        collect_and_resolve_cell_edges(
+            cell_idx,
+            shard_ctx,
+            &output_buffer.vertices,
+            &output_buffer.edge_neighbor_slots,
+            output_buffer.edge_keys_verified,
+            slot_points,
+            assignment,
+            incoming_checks,
+            &mut output_buffer.vertex_indices,
+            &mut self.edges_to_later,
+            &mut self.edges_overflow,
+        );
+    }
+
+    #[cfg(not(target_feature = "avx2"))]
     fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
@@ -69,7 +97,9 @@ impl EdgeScratch {
         collect_and_resolve_cell_edges(
             cell_idx,
             shard_ctx,
-            output_buffer,
+            &output_buffer.vertices,
+            &output_buffer.edge_neighbor_slots,
+            output_buffer.edge_keys_verified,
             slot_points,
             assignment,
             incoming_checks,
@@ -79,6 +109,106 @@ impl EdgeScratch {
         );
     }
 
+    // Keep the endpoint source target-specialized. Routing both targets through
+    // an external slice perturbed the generic hot leaf; these parallel bodies
+    // preserve its established self-owned-index codegen.
+    #[cfg(target_feature = "avx2")]
+    #[allow(clippy::too_many_arguments)] // compact edge records carry final CSR provenance
+    fn emit(
+        &mut self,
+        shard: &mut ShardState,
+        cell_vertices: &[VertexData],
+        vertex_indices: &[u32],
+        cell_idx: u32,
+        cell_slot: u32,
+        cell_start: u32,
+        bin: BinId,
+        keys_verified: bool,
+    ) {
+        use super::edge_checks::thirds_for_emit;
+
+        let vertex_count = assert_endpoint_lengths(cell_vertices, vertex_indices.len());
+
+        // These scratch records are Copy and own no resources. Iterating by
+        // copy avoids Drain's per-element/unwind bookkeeping; successful
+        // emission clears the reusable buffer below.
+        for entry in self.edges_to_later.iter().copied() {
+            let locals = entry.locals;
+            let a = locals[0] as usize;
+            let b = locals[1] as usize;
+            debug_assert!(a < vertex_count && b < vertex_count);
+            // The sole record producer creates both locals from `i` and its
+            // cyclic successor in `0..vertex_count`; lengths were checked once
+            // above. Keep repeated bounds checks out of the forwarding loops.
+            let keys = unsafe {
+                [
+                    cell_vertices.get_unchecked(a).0,
+                    cell_vertices.get_unchecked(b).0,
+                ]
+            };
+            let indices = unsafe {
+                [
+                    *vertex_indices.get_unchecked(a),
+                    *vertex_indices.get_unchecked(b),
+                ]
+            };
+            let thirds = thirds_for_emit(
+                keys_verified,
+                &mut shard.output.edge_mismatches,
+                entry.key,
+                keys,
+            );
+            shard.dedup.push_edge_check(
+                entry.local_b,
+                EdgeCheck {
+                    neighbor_slot: cell_slot,
+                    thirds,
+                    indices,
+                },
+            );
+        }
+        self.edges_to_later.clear();
+
+        for entry in self.edges_overflow.iter().copied() {
+            let locals = entry.locals;
+            let a = locals[0] as usize;
+            let b = locals[1] as usize;
+            debug_assert!(a < vertex_count && b < vertex_count);
+            // Same producer/range proof as the ordinary forwarding loop.
+            let keys = unsafe {
+                [
+                    cell_vertices.get_unchecked(a).0,
+                    cell_vertices.get_unchecked(b).0,
+                ]
+            };
+            let indices = unsafe {
+                [
+                    *vertex_indices.get_unchecked(a),
+                    *vertex_indices.get_unchecked(b),
+                ]
+            };
+            let thirds = thirds_for_emit(
+                keys_verified,
+                &mut shard.output.edge_mismatches,
+                entry.key,
+                keys,
+            );
+            shard.output.edge_check_overflow.push(EdgeCheckOverflow {
+                key: entry.key,
+                side: entry.side,
+                source_bin: bin,
+                target_bin: entry.target_bin,
+                thirds,
+                indices,
+                slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],
+                source_cell: cell_idx,
+                source_offsets: locals,
+            });
+        }
+        self.edges_overflow.clear();
+    }
+
+    #[cfg(not(target_feature = "avx2"))]
     #[allow(clippy::too_many_arguments)] // compact edge records carry final CSR provenance
     fn emit(
         &mut self,
@@ -212,7 +342,7 @@ pub(crate) fn emit_cell_output(
     cell_idx: u32,
     cell_slot: u32,
     cell_start: u32,
-    output_buffer: &CellOutputBuffer,
+    output_buffer: &mut CellOutputBuffer,
     slot_points: &[crate::cube_grid::SlotPoint],
     incoming_checks: Vec<EdgeCheck>,
 ) -> Result<(), BuildCellsError> {
@@ -242,6 +372,9 @@ pub(crate) fn emit_cell_output(
     shard.output.cell_indices.reserve(count);
 
     {
+        #[cfg(target_feature = "avx2")]
+        let vertex_indices = &mut output_buffer.vertex_indices;
+        #[cfg(not(target_feature = "avx2"))]
         let vertex_indices = &mut scratch.vertex_indices;
         for ((key, pos), vi) in output_buffer
             .vertices
@@ -333,6 +466,18 @@ pub(crate) fn emit_cell_output(
         }
     }
 
+    #[cfg(target_feature = "avx2")]
+    scratch.emit(
+        shard,
+        &output_buffer.vertices,
+        &output_buffer.vertex_indices,
+        cell_idx,
+        cell_slot,
+        cell_start,
+        bin,
+        output_buffer.edge_keys_verified,
+    );
+    #[cfg(not(target_feature = "avx2"))]
     scratch.emit(
         shard,
         &output_buffer.vertices,

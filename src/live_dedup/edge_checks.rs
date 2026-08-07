@@ -13,7 +13,7 @@ use super::types::{
     LocalId,
 };
 use super::with_two_mut;
-use crate::live_dedup::VertexKey;
+use crate::live_dedup::{VertexData, VertexKey};
 use crate::packed_layout::PackedSlotLayout;
 
 #[inline]
@@ -228,12 +228,13 @@ impl ShardDedup {
 ///
 /// This eliminates the edges_to_earlier intermediate vec
 fn assert_cell_output_lengths(
-    output_buffer: &crate::live_dedup::CellOutputBuffer,
-    vertex_indices_len: usize,
+    cell_vertices: &[VertexData],
+    edge_neighbor_slots: &[u32],
+    vertex_indices: &[u32],
 ) -> usize {
-    let n = output_buffer.vertices.len();
+    let n = cell_vertices.len();
     assert!(
-        n >= 2 && output_buffer.edge_neighbor_slots.len() == n && vertex_indices_len == n,
+        n >= 2 && edge_neighbor_slots.len() == n && vertex_indices.len() == n,
         "cell output arrays out of sync"
     );
     n
@@ -245,7 +246,9 @@ fn assert_cell_output_lengths(
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
     shard_ctx: &mut super::emit::ShardContext<'_>,
-    output_buffer: &crate::live_dedup::CellOutputBuffer,
+    cell_vertices: &[VertexData],
+    edge_neighbor_slots: &[u32],
+    keys_verified: bool,
     slot_points: &[crate::cube_grid::SlotPoint],
     assignment: &BinAssignment,
     mut incoming_checks: Vec<EdgeCheck>,
@@ -257,11 +260,7 @@ pub(super) fn collect_and_resolve_cell_edges(
     let local = shard_ctx.local;
     let bin = shard_ctx.bin;
 
-    let cell_vertices = &output_buffer.vertices;
-    let edge_neighbor_slots = &output_buffer.edge_neighbor_slots;
-    let keys_verified = output_buffer.edge_keys_verified;
-
-    let n = assert_cell_output_lengths(output_buffer, vertex_indices.len());
+    let n = assert_cell_output_lengths(cell_vertices, edge_neighbor_slots, vertex_indices);
     edges_to_later.clear();
     edges_overflow.clear();
 
@@ -662,7 +661,11 @@ mod tests {
         output.vertices.resize(2, ([0, 1, 2], glam::Vec3::ZERO));
         output.edge_neighbor_slots.resize(1, u32::MAX);
         output.edge_neighbor_globals.resize(2, u32::MAX);
-        assert_cell_output_lengths(&output, 2);
+        assert_cell_output_lengths(
+            &output.vertices,
+            &output.edge_neighbor_slots,
+            &[INVALID_INDEX; 2],
+        );
     }
 
     #[test]
@@ -736,6 +739,8 @@ mod tests {
             vertices: vec![([0, 1, 2], glam::Vec3::X); 3],
             edge_neighbor_globals: vec![0, 0, u32::MAX],
             edge_neighbor_slots: vec![0, 0, u32::MAX],
+            #[cfg(target_feature = "avx2")]
+            vertex_indices: vec![INVALID_INDEX; 3],
             edge_keys_verified: true,
         };
         let incoming = vec![EdgeCheck {
@@ -760,7 +765,9 @@ mod tests {
         collect_and_resolve_cell_edges(
             1,
             &mut shard_ctx,
-            &output,
+            &output.vertices,
+            &output.edge_neighbor_slots,
+            output.edge_keys_verified,
             &slot_points,
             &assignment,
             incoming,

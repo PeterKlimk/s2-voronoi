@@ -27,19 +27,23 @@ current status and concise disposition here.
 
 ### ARCH-ASM-001 — Fuse extraction with dedup preparation
 
-- **Status:** In progress
-- **Hypothesis:** `to_vertex_data_full` materializes `CellOutputBuffer`; `emit_cell_output` rereads
-  it and separately prepares `scratch.vertex_indices`. An emission-oriented extraction target may
-  eliminate an intermediate publication/read pass across two leaves representing about 9.7% of
-  whole-run IBS operation samples.
-- **First step:** Map which complete-cycle fields `collect_and_resolve` requires before any output
-  can be committed. Identify the smallest fused scratch representation without changing edge order,
-  keys, fallback extraction, or cross-bin ownership.
-- **Reopening boundary:** This is work removal, not another partitioned owner/local emission order.
+- **Status:** Completed — retained
+- **Result:** On native AVX2, initialize the reusable resolution-index vector inside the existing
+  extraction loop and carry it in `CellOutputBuffer`. This removes the separate per-cell
+  `clear`/`resize` fill loop from edge collection without changing edge order, keys, fallback
+  extraction, or ownership. Generic targets retain the former `EdgeScratch` path.
+- **Production gate:** 4M uniform/16-worker cycles -1.00% over 20 physical pairs (18/20 favorable),
+  instructions -0.22%, branches -0.98%; twelve three-build wall pairs were neutral. 4M Fibonacci
+  cycles -0.44%; 500k clustered was neutral. Native pinned uniform improved strongly; pinned
+  Fibonacci cycles were neutral despite lower instructions/branches.
+- **Validation:** Full release and checked suites, clippy, formatting, and native wide/scalar
+  fingerprints passed. Generic hot-path counters remained neutral after target gating.
+- **Reopening boundary:** Further fusion must remove edge collection or final emission traversal;
+  do not merely relocate this now-fused index initialization again.
 
 ### ARCH-ASM-002 — Separate gnomonic and fallback stream phases
 
-- **Status:** Queued
+- **Status:** In progress
 - **Hypothesis:** Consume the ordinary stream through a gnomonic-only loop until a fallback request,
   then transfer the remainder to a cold fallback loop. Remove per-neighbor builder-mode/result
   machinery and shrink the dominant hot leaf.

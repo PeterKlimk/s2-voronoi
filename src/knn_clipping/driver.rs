@@ -525,7 +525,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     .map_err(BuildCellsError::CellBuild)?;
     stats.record_into(cell_telemetry);
 
-    let output_buffer = build_ctx.output_buffer();
+    let output_buffer = build_ctx.output_buffer_mut();
     emit_cell_output(
         edge_scratch,
         shard_ctx,

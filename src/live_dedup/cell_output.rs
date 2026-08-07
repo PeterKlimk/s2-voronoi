@@ -42,6 +42,10 @@ pub(crate) struct CellOutputBuffer {
     pub(crate) vertices: Vec<VertexData>,
     pub(crate) edge_neighbor_globals: Vec<u32>,
     pub(crate) edge_neighbor_slots: Vec<u32>,
+    /// Dedup resolution slot initialized alongside extraction output and
+    /// patched while incoming edge checks are collected.
+    #[cfg(target_feature = "avx2")]
+    pub(crate) vertex_indices: Vec<u32>,
     /// True when the extractor guarantees every real edge's neighbor appears
     /// in BOTH endpoint vertex keys (the emit engine's key/edge-consistency
     /// precondition). The incremental gnomonic clip maintains this by
@@ -60,6 +64,8 @@ impl CellOutputBuffer {
             vertices: Vec::with_capacity(capacity),
             edge_neighbor_globals: Vec::with_capacity(capacity),
             edge_neighbor_slots: Vec::with_capacity(capacity),
+            #[cfg(target_feature = "avx2")]
+            vertex_indices: Vec::with_capacity(capacity),
             edge_keys_verified: false,
         }
     }
@@ -68,6 +74,8 @@ impl CellOutputBuffer {
         self.vertices.clear();
         self.edge_neighbor_globals.clear();
         self.edge_neighbor_slots.clear();
+        #[cfg(target_feature = "avx2")]
+        self.vertex_indices.clear();
         self.edge_keys_verified = false;
     }
 }

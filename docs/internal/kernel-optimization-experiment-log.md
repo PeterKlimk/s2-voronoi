@@ -695,3 +695,42 @@ were removed. Do not reintroduce batch-level diagnostic state unless it can avoi
 boundary branch and unconditional work for short/deduplicated batches. More broadly, this closes
 trace publication as an isolated target: a larger control-flow change must earn its win independently
 of these two stores.
+
+
+### Extraction-prepared resolution indices — retained on native AVX2 (2026-08-07)
+
+ARCH-ASM-001 mapped the extraction-to-emission dependency before changing storage. Edge collection
+requires the complete cyclic keys and edge-neighbor slots, and final forwarding requires resolved
+indices, so directly streaming vertices into shard output would violate complete-cycle resolution.
+The removable pass was narrower but real: after extraction initialized vertices and edge slots,
+`EdgeScratch::collect_and_resolve` separately cleared and resized a resolution-index vector to
+`INVALID_INDEX`. That resize compiled as another small per-vertex fill loop.
+
+The retained native path moves the reusable resolution-index vector into `CellOutputBuffer` and
+writes each sentinel alongside the existing extraction-loop stores. Collection patches that vector
+in place and emission consumes it. The vector allocation is relocated rather than duplicated;
+`EdgeScratch` retains its original vector and exact fill path on non-AVX2 targets. Fallback and
+all-constraints extraction initialize the same field on the cold native path. Edge ordering,
+triplet keys, incoming-check partitioning, owner decisions, and output order are unchanged.
+
+Production release assembly showed the intended structural change: `to_vertex_data_full` grew from
+5,247 to 5,459 bytes for the fused store/capacity path, while `emit_cell_output` fell from 5,598 to
+5,459 bytes and the driver consume closure fell by 104 bytes. More importantly, the separate
+resolution-index fill loop disappeared; executable text changed by less than 1 KiB. Generic builds
+retain equal-sized extraction and emission leaves and neutral retired-work controls.
+
+Equal-length native aliases measured:
+
+| Workload | Cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| pinned 1M uniform, 15 pairs ×4 | -1.91% | -0.68% | -1.76% | -1.20% |
+| pinned 1M Fibonacci, 15 pairs ×4 | +0.01% | -0.26% | -1.08% | +0.48% |
+| 4M uniform, 16 workers, 20 pairs | -1.00% (18/20) | -0.22% | -0.98% | +0.14% |
+| 4M Fibonacci, 16 workers, 12 pairs | -0.44% | -0.20% | -1.01% | +0.37% |
+| 500k clustered, 16 workers, 12 pairs | +0.06% | neutral | -0.15% | +0.13% |
+
+Twelve 4M uniform wall pairs with three builds per invocation were neutral in elapsed time while
+aggregate cycles fell 0.75%; the primary physical-pair cycle result and robust branch removal carry
+the acceptance. A first ungated form regressed generic pinned cycles despite reducing branches, so
+the fused preparation is intentionally native-AVX2-only and the generic storage/code path remains
+unchanged.

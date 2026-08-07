@@ -96,8 +96,13 @@ impl CellBuildContext {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn output_buffer(&self) -> &CellOutputBuffer {
         &self.output_buffer
+    }
+
+    pub(crate) fn output_buffer_mut(&mut self) -> &mut CellOutputBuffer {
+        &mut self.output_buffer
     }
 }
 
