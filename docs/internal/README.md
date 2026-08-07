@@ -18,6 +18,7 @@ guidance remain in the parent directory: `architecture.md`, `correctness.md`, `p
 ## Plans and experiment records
 
 - `point-api-plan.md` and `positive-edge-simplification-plan.md`: implemented API/design plans.
+- `assembly-architecture-checklist.md`: active assembly-driven architectural experiment queue.
 - `kernel-optimization-experiment-log.md`: retained kernel measurements and rejection evidence.
 - `kernel-optimization-brief.md` and `kernel-optimization-agent-prompt.md`: historical review
   instructions.
