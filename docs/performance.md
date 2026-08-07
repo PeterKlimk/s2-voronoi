@@ -1510,6 +1510,17 @@ outside this deliberately narrow re-audit.
   generic executable `.text`, with identical `dispatch_clip` size. Keep the conventional zero-mask
   failure check first rather than encode workload frequency in source that generates no code change.
 
+  A generic `(N, mask)` transition table was also rejected. A 3 KiB `u16` table packed entry/exit
+  predecessor and successor indices, removing all 24 static `tzcnt` instructions and 24 of 32
+  `cmov`s across the twelve small kernels. Forty equal-alias 4M uniform pairs reduced instructions
+  0.42% in every pair, but cycles were neutral (-0.04%, 28/40) and build time only -0.12%. Worse,
+  thirty 4M Fibonacci pairs retained the 0.42% instruction reduction while increasing cycles 0.31%,
+  branch misses 0.57%, and build time 0.62%; clustered cycles were neutral (+0.13%). A compact 1.5
+  KiB `u8` table storing only successor indices kept the wraparound `cmov`s and reduced instructions
+  0.27--0.30%, but still raised 4M cycles 0.08% on uniform and 0.15% on Fibonacci, with pinned
+  Fibonacci cycles up 0.47%. The dependent L1 lookup and footprint cost more than the register-only
+  transition arithmetic in the high-mixed-mask regime. Keep the bit operations and `tzcnt`s.
+
 - Partitioning live vertex emission by a per-cell resolved-index mask removed the hot resolved/
   unresolved branch and reduced branch misses by about 0.63%. It first reserved the cell's complete
   index span, then iterated resolved and unresolved bitsets separately with `trailing_zeros`.
