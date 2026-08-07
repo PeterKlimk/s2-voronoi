@@ -61,16 +61,21 @@ current status and concise disposition here.
 
 ### ARCH-ASM-003 — Combine clipping and termination certification
 
-- **Status:** In progress
-- **Hypothesis:** Let the bounded clip operation consume the exact successor/unseen bound and return
-  only continue, terminate, or a cold exceptional outcome. Avoid returning `ClipResult` and then
-  reopening builder state for boundedness and termination.
-- **Constraint:** Preserve the rule that mid-batch termination is checked only after an unchanged
-  clip and uses the complete exact remainder bound.
+- **Status:** Completed — rejected
+- **Result:** A lazy exact-bound continuation let the gnomonic clip operation return continue,
+  terminate, fallback, or failure directly. It preserved unchanged-only certification and shrank
+  both packed and shell production leaves, but did not produce a robust primary-cycle win.
+- **Production gate:** The packed leaf shrank 159 bytes and pinned uniform instructions fell 0.32%,
+  but 4M uniform/16-worker cycles improved only 0.05% over 20 one-build pairs and 0.08% over 16
+  two-build pairs. 4M Fibonacci cycles regressed 0.21% (5/12 favorable); clustered cycles were
+  neutral. The candidate was removed.
+- **Reopening boundary:** Do not merely move the existing unchanged/bounded/bound sequence across an
+  interface again. A retry must eliminate certification work or state, not only combine its return
+  enum with clipping.
 
 ### ARCH-ASM-004 — Split stream consumption permanently at boundedness
 
-- **Status:** Queued
+- **Status:** In progress
 - **Hypothesis:** Boundedness is monotonic. Move from an initial unbounded stream loop into a
   bounded-only loop, removing repeated boundedness checks and bounding-reference tracking from the
   steady state.

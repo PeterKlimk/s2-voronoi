@@ -774,3 +774,35 @@ and branches -1.38%. The architectural gain therefore does not depend on AVX2 co
 The full release and checked suites, `cargo clippy --all-targets`, formatting, and diff checks passed.
 Native wide and scalar fingerprints matched exactly:
 `0e65ca5dbe8fe07c`, semantic topology `961e56d915d09a4e`, 199,996 vertices, and 100,000 cells.
+
+
+### Clip-integrated termination certification — rejected (2026-08-07)
+
+ARCH-ASM-003 passed the exact successor/unseen-bound calculation into the direct gnomonic clip as a
+lazy continuation. `Changed` clips returned continue without evaluating it; only `Unchanged` clips
+checked boundedness, evaluated the complete exact remainder bound, and called the existing cached
+termination predicate. The batch loop received continue-with-progress, terminate, fallback, or
+failure rather than `ClipResult`, then published telemetry in the original order. Focused release
+cell-build tests, including forced fallback and termination checkpoints, passed.
+
+Production native assembly showed a genuine seam change: `clip_batch_source::<false>` shrank from
+2,279 to 2,120 bytes and the shell specialization from 2,355 to 2,168 bytes. `dispatch_clip` remained
+5,984 bytes. Executable text nevertheless grew 720 bytes elsewhere in the monomorphized code, and
+the smaller leaves did not yield a robust cross-regime latency improvement.
+
+Equal-length native aliases measured:
+
+| Workload | Cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| pinned 1M uniform, 15 pairs ×4 | -0.18% | -0.32% | neutral | -0.40% |
+| pinned 1M Fibonacci, 15 pairs ×4 | neutral | -0.19% | neutral | neutral |
+| 4M uniform, 16 workers, 20 pairs | -0.05% (10/20) | -0.30% | +0.02% | -0.12% |
+| 4M uniform, 16 workers, 16 pairs ×2 | -0.08% (13/16) | -0.33% | -0.03% | -0.16% |
+| 4M Fibonacci, 16 workers, 12 pairs | +0.21% (5/12) | -0.19% | -0.02% | +0.12% |
+| 500k clustered, 16 workers, 12 pairs | neutral | -0.50% | -0.06% | -0.18% |
+
+Twelve three-build wall pairs reported elapsed time -0.28%, but hardware cycles were only -0.03%; the
+primary repeated cycle sets and Fibonacci regression outweigh that noisier elapsed result. The
+candidate was removed. Returning a combined semantic outcome can reduce the visible hot leaf and
+retired instructions without removing any underlying certification work, so this interface-only
+form is closed.
