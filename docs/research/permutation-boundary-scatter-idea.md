@@ -134,8 +134,9 @@ helper rather than three site-specific rewrites, but measure the assembly site a
 - **Adjacent, closed neutral:** the adaptive cell-count/prefix candidate. Its lesson — do not add
   another A/B materialization path with no retired-work or outcome benefit — applies directly.
   Bucketing must be a single unconditional path if it wins, not a fourth mode.
-- **Interacting, untried:** the TLB / huge-page probe. Bucketing reduces TLB reach pressure, so if
-  `MADV_HUGEPAGE` lands first this win shrinks. Measure them in that order and do not bundle them.
+- **Interacting, now closed negative:** eager allocator-wide `MADV_HUGEPAGE` reduced L2 DTLB
+  misses but regressed the 4M uniform all-core gate even at 16/64 MiB thresholds. Bucketing therefore
+  has no retained huge-page predecessor to subtract, but must still justify its own extra pass.
 
 ## Gate
 

@@ -913,3 +913,75 @@ matched exactly: `0e65ca5dbe8fe07c`, semantic topology `961e56d915d09a4e`, 199,9
 
 This closes the six-item assembly architecture checklist. ARCH-ASM-001, ARCH-ASM-002, and
 ARCH-ASM-006 are retained; ARCH-ASM-003, ARCH-ASM-004, and ARCH-ASM-005 were measured and removed.
+
+
+### Post-checklist production profile and native THP gate (2026-08-08)
+
+The completed assembly checklist was profiled again at clean `9de56ae` using the production release
+profile with `-C target-cpu=native -C debuginfo=1`. The copied binary SHA-256 was
+`3784810ed1491d72bc5dda4510a9b884eca92ef9edd99476c5608436a3d6b350`. Three independent pinned
+4M uniform/16-worker/no-preprocess captures were taken for IBS operations and retired branch
+misses. Percentages below are normalized to samples in the benchmark executable, excluding
+machine-wide kernel/foreign IBS samples:
+
+| Production leaf | Size / frame | IBS operations | Branch misses |
+| --- | ---: | ---: | ---: |
+| `dispatch_clip` | 5,984 B / leaf | 16.10% | 13.68% |
+| `emit_cell_output` | 5,459 B / 360 B | 14.04% | 12.34% |
+| `clip_batch_source::<false>` | 2,296 B / 200 B | 11.55% | 12.75% |
+| `prepare_group_directed` | 12,968 B / 928 B | 9.40% | 20.76% |
+| `emit_generator_group` | 5,212 B / 680 B | 6.28% | 4.88% |
+| `to_vertex_data_full` | 5,459 B / 296 B | 5.22% | 4.67% |
+
+The ranking is materially unchanged. The builder-mode split reduced the three-capture mean IBS
+sample count in `clip_batch_source::<false>` by about 5.4% against a newly captured native build of
+`8203444`; the other per-leaf count movements are small enough to treat as sampling/code-placement
+noise. `prepare_group_directed` is now the largest branch-miss leaf, but annotation again places its
+largest regions on the useful empty-mask exits from the resident-major AVX2 candidate passes. The
+mask-zero path dominates and avoids extraction/publication, so this is not evidence for making the
+publication path unconditional. `dispatch_clip` and `emit_cell_output` remain broad semantic leaves,
+not isolated arithmetic or bounds-check islands.
+
+A quiet-host cumulative equal-alias comparison from `8203444` to `9de56ae` confirms that the three
+retained checklist changes compose favorably. Twenty physical-core 4M uniform pairs measured cycles
+-1.13% (19/20 favorable), instructions -0.87%, branches -3.19%, and branch misses -0.61%. Twelve
+three-build wall pairs measured cycles -0.94% (11/12), instructions -0.89%, branches -3.30%, and
+elapsed time -0.90% (7/12).
+
+Seven quiet final-build stat repetitions measured 23.96B cycles, 30.96B instructions (IPC 1.29),
+3.60B branches, and 187.1M branch misses (5.19%). Dispatch-token repetitions put load-queue stalls
+at 1.07% of cycles, store-queue stalls at 5.10%, and retire-token stalls at 7.65%. Five timing builds
+had medians of 2.68 ms input validation, 35.45 ms grid build, 318.28 ms cell construction, 61.73 ms
+shard assembly, and 433.39 ms total. Cell construction remains the dominant phase, but the low
+load-queue fraction still rejects a resident-load-latency diagnosis.
+
+The same native run supplied the previously missing Linux TLB gate: about 147M L1 DTLB misses and
+22M L2 DTLB misses/page walks. Three L2-miss samples attributed roughly 80% to five streaming or
+scatter phases—cell-prefix emission (17.97%), slot-coordinate materialization (17.38%), final cell
+index scatter (16.92%), grid materialization (14.05%), and bin assignment (13.43%). The hot clipping
+leaves were individually small TLB consumers; `prepare_group_directed` was only 0.40%.
+
+A temporary benchmark-global allocator probe called `MADV_HUGEPAGE` on the page-aligned interior of
+large allocations. A no-advice wrapper control separated allocator codegen from the advice itself.
+At the 2 MiB threshold, 4M uniform made 240 advice calls covering about 1.50 GB. The probe reduced
+L2 DTLB misses from about 21.1M to 3.43M (-83.7%), and pinned one-thread 1M uniform cycles improved
+6.8% against the wrapper control. The primary all-core result reversed the trade:
+
+| Advice threshold | 4M uniform/16-worker cycles | Instructions | Branches | Branch misses |
+| --- | ---: | ---: | ---: | ---: |
+| 2 MiB | +4.53% (0/20) | -3.00% | -5.30% | -11.49% |
+| 16 MiB | +3.72% (0/12) | -2.20% | -3.86% | -8.16% |
+| 64 MiB | +3.41% (0/12) | -0.90% | -1.56% | -2.91% |
+
+The counter reductions largely remove kernel page-fault/page-walk work, but eager huge-page faults
+and allocation/compaction serialize enough all-core progress to lose latency decisively. Larger
+thresholds do not repair the primary gate. All allocator probe code was removed. A future TLB
+experiment needs a phase-owned array that is already faulted and reused long enough to amortize a
+post-fault collapse; another global or eager threshold is closed.
+
+Captures are `/tmp/voronoi-final-quiet-ibs-{1,2,3}.data`,
+`/tmp/voronoi-final-quiet-branch-{1,2,3}.data`, and
+`/tmp/voronoi-final-quiet-dtlb-{1,2,3}.data` for the lifetime of this host session. The refreshed
+profile exposes no new small production experiment: future ordinary-path work should remove a
+larger algorithmic phase or wait for a workload-specific bottleneck rather than retrying local
+clipping, owner-emission, empty-mask, or eager-THP variants.

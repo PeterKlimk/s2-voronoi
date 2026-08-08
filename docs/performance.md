@@ -1336,11 +1336,16 @@ ordinary Rayon policy and do not use this profile to justify phase-specific thre
 
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 
-- **TLB / huge-page probe (native Linux only):** the measured memory wall is dedup and grid build
-  streaming large arrays with scattered access; every locality experiment so far targeted cache
-  lines, none TLB reach. WSL reported millions of data-TLB misses at 2M, but its page and memory
-  behavior is not representative enough to gate an allocator/THP change. Repeat the counter probe
-  on native Linux before trying `madvise(MADV_HUGEPAGE)` on slot arrays, shards, or grid storage.
+- **TLB / huge-page probe (native Linux only; closed negative 2026-08-08):** the final 4M
+  uniform/16-worker build incurred about 147M L1 DTLB misses and 22M L2 DTLB misses/page walks.
+  Sampling localized roughly 80% of L2 misses to grid/materialization, bin assignment, cell-prefix,
+  and final-index scatter streams rather than the clipping leaves. An allocator probe advised every
+  allocation of at least 2 MiB with `MADV_HUGEPAGE`; it reduced L2 misses about 84% and was strongly
+  favorable single-threaded, but regressed the primary all-core cycles 4.53%. Thresholds of 16 and
+  64 MiB still regressed cycles 3.72% and 3.41%. The synchronous huge-page fault/allocation cost is
+  therefore larger than the translation saving on the production gate; all probe code was removed.
+  Revisit only with a phase-owned, already-faulted array and a measured reuse interval long enough
+  to amortize post-fault collapse, not another eager allocation-wide advice threshold.
 - **Dense-gated directional termination certificate:** the archived certificate (d9d0975) closed
   negative on fib/uniform (+3.9–4.5% instructions), but the residual dense-cap cost after
   band-prune is certificate depth, and mega runs ~11x candidate inflation versus ~1.6x normal.
