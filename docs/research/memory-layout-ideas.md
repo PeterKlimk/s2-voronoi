@@ -881,6 +881,32 @@ allocation and allowed count work to optimize away, but was neutral single-threa
 neutral-to-adverse with 16 workers; Fibonacci cache misses rose about 4%. A duplicated cfg-specific
 center loop is not justified by that ceiling.
 
+Further post-handoff layout/control probes were also closed on the quiet host:
+
+- Reusing `tail_pos == usize::MAX` as the lazy-tail-ready marker removed the generation vector and
+  512 bytes of native text. Single-worker cycles improved about 0.25%, but 4M Fibonacci cycles
+  regressed 0.30% in seven of nine pairs; the smaller metadata did not survive the scale gate.
+- Replacing rare `band_mode` bits with values in `center_bound` removed 688 text bytes and about
+  0.15% of branches, but 500k single-worker cycles regressed 0.75%/1.02% on Fibonacci/uniform.
+- Storing only the two consumed chunk sizes instead of the full `PackedNeighborPolicy` reduced
+  instructions about 0.1% and 4M cycles 0.27%/0.42%, but Fibonacci cache misses rose about 2% in
+  fourteen of fifteen pairs and quiet 1M Fibonacci wall time regressed about 1.1%.
+- Deriving mirrored directed-stream flags and its grid pointer increased branches by 0.2--0.4%; a
+  once-published takeover telemetry latch grew text by 168 bytes. Both were stopped before broader
+  gates. Removing `first_dot` metadata was likewise stopped when decoding it at the certificate
+  consumer grew text by 1,752 bytes instead of compacting the executable.
+- Borrowing shell prefixes removed their copy and helped 100k mega cycles about 1.2--1.5%. The
+  directed-only shape grew text by 844 bytes and regressed ordinary single-worker uniform cycles
+  1.0%. Extending borrowing to all shell consumers removed `CellBuildContext.frontier_keys` and
+  helped clustered/mega cycles 1.0%/1.4%, but grew text by 1,848 bytes and regressed 4M ordinary
+  cycles 0.17%/1.07%. The shell-copy savings do not justify the ordinary code/layout loss.
+- Removing the packed-stage `out.clear()` was retired-work neutral and did not change text size;
+  retain the explicit buffer-state operation rather than treating source deletion as a win.
+
+Probe patches and paired tables are under `/tmp/s2-core-probes/` with names
+`tail-pos-sentinel`, `center-bound-mode`, `query-stream-policy`, `derived-stream-state`,
+`stream-takeover-latch`, `no-first-dot`, `borrow-all-stream-keys`, and `packed-out-clear`.
+
 ## Ideas currently disfavored
 
 - Do not replace the full cube-grid neighbor/ring-2 tables with a boundary-only
