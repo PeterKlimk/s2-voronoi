@@ -748,6 +748,75 @@ and offsets are not known until shard construction completes, and a counting pre
 global arena can easily repay the saved copy with duplicated geometry work, contention, or unstable
 addresses.
 
+## 8. Borrow retained nearest-neighbor keys into clipping — implemented 2026-08-09
+
+### Previous cost
+
+Packed selection retained ordered `u64` keys containing both the raw-f32 dot and grid slot, then
+extracted every selected slot into a caller-owned `Vec<u32>`. Cell construction gathered the
+`SlotPoint` from that copied slot and, at mid-batch termination checkpoints, gathered the successor
+position and recomputed a dot that was already present in the ordering key. The frontier vector was
+normally cleared between cells, so `resize(k, 0)` also initialized each common 16-entry output before
+the emitter overwrote it.
+
+### Result
+
+The packed query now retains the exact selected range in its existing per-query key vector. The
+directed stream exposes a lifetime-checked `exact_keys` borrow that is valid until
+`advance_frontier`; shell traversal uses the same key representation in its caller-owned buffer.
+Clipping decodes the low-word slot and reuses the high-word successor dot. The handoff is safe Rust:
+the packed query exclusively borrows its prepared group, later partition/sort work cannot run while
+the selected range is borrowed, and advancing invalidates the range only after clipping returns.
+Candidate order, bounds, stamp writes, clipping order, fallback transitions, and shell takeover are
+unchanged.
+
+Two controls separated the result:
+
+- Merely carrying copied `u64` keys was a small single-thread improvement but retained the handoff
+  write. A no-zero-initialization `Vec<u32>` emitter reduced 500k single-thread cycles about 1%, but
+  was neutral at one million with 16 workers.
+- Borrowing the retained keys directly removed the extraction/copy and made the stored dot available
+  to the existing termination check. Moving the key cursor into `PackedQuery` was then tested as an
+  additive memory-state reduction; it was neutral-to-adverse and increased cache misses, so the
+  per-query cursor arrays remain.
+
+Final native counter ratios (candidate/baseline, paired medians) were:
+
+| Regime | Cycles | Instructions | Branches | Branch misses |
+|---|---:|---:|---:|---:|
+| 500k Fibonacci, 1 worker | 0.985 | 0.990 | 0.993 | 0.950 |
+| 500k uniform, 1 worker | 0.986 | 0.990 | 0.989 | 0.961 |
+| 1M Fibonacci, 16 workers | 0.989 | 0.989 | 1.000 | 0.955 |
+| 1M uniform, 16 workers | 0.985 | 0.988 | 0.991 | 0.964 |
+| 4M Fibonacci, 16 workers | 0.988 | 0.990 | 0.994 | 0.955 |
+| 4M uniform, 16 workers | 0.985 | 0.988 | 0.991 | 0.965 |
+
+All seven final-layout 500k single-thread cycle pairs favored the candidate for both ordinary
+distributions; six of seven 1M multithreaded pairs did. All seven 4M Fibonacci pairs and six of
+seven 4M uniform pairs favored it.
+Cache references and misses were neutral-to-favorable in the final layout, with the least decisive
+result being essentially neutral misses on 500k uniform and 1M Fibonacci. Clustered and `mega`
+guardrails remained cycle-neutral-to-favorable. Raw counter tables and the attribution patches are
+under `/tmp/s2-core-probes/`.
+
+This is the useful handoff fusion that the constraint-batch experiments did not test: it transfers
+already-retained selection data without preparing constraints, buffering clip metadata, widening
+the long-lived key store, or speculating past termination.
+
+### Remaining independent layout candidates
+
+The following are not implied wins and should remain separately gated:
+
+- Reuse an exhausted query's `chunk0_keys[qi]` allocation for its lazily materialized tail; those
+  payload lifetimes do not overlap, but clustered allocation counts must first show a useful ceiling.
+- Compile `center_tail_counts` storage and writes only with `telemetry` if disassembly confirms they
+  survive normal release optimization.
+- Collapse the duplicate packed-query and directed-stream frontier caches only if branch and text
+  size counters both improve; the stream-level cache remains required for repeated pre-batch probes.
+
+Do not retry moving the emitted cursor into `PackedQuery`: despite removing two normal-release cursor
+vectors, the measured additive prototype did not improve instructions and regressed cache behavior.
+
 ## Ideas currently disfavored
 
 - Do not replace the full cube-grid neighbor/ring-2 tables with a boundary-only

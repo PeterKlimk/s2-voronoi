@@ -181,8 +181,7 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
                     PackedStage::Chunk0 => 16,
                     PackedStage::Tail => 8,
                 };
-                let mut out = vec![u32::MAX; k];
-                let chunk = prepared.next_chunk(qi, stage, k, &mut out);
+                let chunk = prepared.next_chunk(qi, stage, k);
                 match chunk {
                     Some(chunk) => {
                         assert!(
@@ -190,7 +189,12 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
                             "unseen bound increased for seed={seed}, qi={qi}"
                         );
                         prev_bound = chunk.unseen_bound;
-                        emitted.extend_from_slice(&out[..chunk.n]);
+                        emitted.extend(
+                            prepared
+                                .current_keys(qi, stage, chunk.keys_start, chunk.n)
+                                .iter()
+                                .map(|&key| key as u32),
+                        );
 
                         if let Some(&next_slot) = expected.get(emitted.len()) {
                             let next_idx = grid.point_indices()[next_slot as usize] as usize;
@@ -279,15 +283,19 @@ fn directed_center_chunk_boundaries_match_safe_bruteforce() {
                     PackedStage::Chunk0 => 16,
                     PackedStage::Tail => 8,
                 };
-                let mut out = vec![u32::MAX; k];
-                match prepared.next_chunk(qi, stage, k, &mut out) {
+                match prepared.next_chunk(qi, stage, k) {
                     Some(chunk) => {
                         assert!(
                             chunk.unseen_bound <= prev_bound + EPS,
                             "unseen bound increased for n={n}, qi={qi}"
                         );
                         prev_bound = chunk.unseen_bound;
-                        emitted.extend_from_slice(&out[..chunk.n]);
+                        emitted.extend(
+                            prepared
+                                .current_keys(qi, stage, chunk.keys_start, chunk.n)
+                                .iter()
+                                .map(|&key| key as u32),
+                        );
                     }
                     None if stage == PackedStage::Chunk0 && prepared.tail_possible(qi) => {
                         prepared.ensure_tail_directed_for(qi, &grid, &mut telemetry);

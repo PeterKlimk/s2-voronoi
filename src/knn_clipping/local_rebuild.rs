@@ -51,14 +51,15 @@ fn gather_knn_grid(
 ) -> Vec<u32> {
     use std::collections::BTreeSet;
     let mut set: BTreeSet<u32> = seeds.iter().copied().collect();
-    let mut batch: Vec<u32> = Vec::new();
+    let mut batch: Vec<u64> = Vec::new();
     let mut collected: Vec<(f32, u32)> = Vec::new();
     for &s in seeds {
         let query = points[s as usize];
         let mut frontier = grid.unrestricted_shell_frontier(query, s as usize, scratch);
         collected.clear();
         while let Some(layer) = frontier.frontier(&mut batch) {
-            for &slot in &batch {
+            for &key in &batch {
+                let slot = crate::cube_grid::neighbor_key_slot(key);
                 let id = grid.point_indices()[slot as usize];
                 let candidate = points[id as usize];
                 // The shell frontier certifies the crate's canonical raw-f32

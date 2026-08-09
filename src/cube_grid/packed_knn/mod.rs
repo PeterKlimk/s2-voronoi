@@ -129,6 +129,7 @@ struct PackedChunk {
     n: usize,
     first_dot: f32,
     unseen_bound: f32,
+    keys_start: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +144,7 @@ pub(crate) struct PackedNeighborBatch {
     pub(crate) first_dot: f32,
     pub(crate) unseen_bound: f32,
     pub(crate) source: PackedNeighborBatchSource,
+    keys_start: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -200,32 +202,39 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         }
     }
 
+    /// Borrow the exact keys retained in packed scratch for the cached frontier.
+    pub(crate) fn exact_keys(&self) -> &[u64] {
+        let CachedFrontier::ExactBatch(batch) = self
+            .cached_frontier
+            .as_ref()
+            .expect("exact keys require a cached packed frontier")
+        else {
+            panic!("exact keys require an exact packed frontier");
+        };
+        let stage = match batch.source {
+            PackedNeighborBatchSource::Chunk0 => PackedStage::Chunk0,
+            PackedNeighborBatchSource::Tail => PackedStage::Tail,
+        };
+        self.prepared
+            .current_keys(self.query_index, stage, batch.keys_start, batch.n)
+    }
+
     /// Return the current packed frontier.
     ///
-    /// For an exact batch, the first probe writes slots to caller-owned `out`
-    /// and the cache retains metadata only. Repeated probes before
-    /// [`Self::advance_frontier`] do not rewrite the slots, so the caller must
-    /// preserve both the buffer length and contents. Bounded or exhausted
-    /// frontiers clear `out`.
-    pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> PackedNeighborFrontier {
+    /// Exact keys remain in packed scratch and can be borrowed with
+    /// [`Self::exact_keys`] until [`Self::advance_frontier`] is called.
+    pub(crate) fn frontier(&mut self) -> PackedNeighborFrontier {
         if let Some(cached) = &self.cached_frontier {
             match cached {
                 CachedFrontier::ExactBatch(batch) => {
-                    debug_assert_eq!(
-                        out.len(),
-                        batch.n,
-                        "cached packed frontier must keep slots in the caller scratch buffer"
-                    );
                     return PackedNeighborFrontier::ExactBatch(*batch);
                 }
                 CachedFrontier::UnknownButBounded { dot_upper_bound } => {
-                    out.clear();
                     return PackedNeighborFrontier::UnknownButBounded {
                         dot_upper_bound: *dot_upper_bound,
                     };
                 }
                 CachedFrontier::Exhausted => {
-                    out.clear();
                     return PackedNeighborFrontier::Exhausted;
                 }
             }
@@ -244,23 +253,17 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             ),
             PackedQueryStage::Exhausted => {
                 self.cached_frontier = Some(CachedFrontier::Exhausted);
-                out.clear();
                 return PackedNeighborFrontier::Exhausted;
             }
         };
 
-        if out.len() < k {
-            out.resize(k, 0);
-        } else {
-            out.truncate(k);
-        }
-        if let Some(chunk) = self.prepared.next_chunk(self.query_index, stage, k, out) {
-            out.truncate(chunk.n);
+        if let Some(chunk) = self.prepared.next_chunk(self.query_index, stage, k) {
             let batch = PackedNeighborBatch {
                 n: chunk.n,
                 first_dot: chunk.first_dot,
                 unseen_bound: chunk.unseen_bound,
                 source,
+                keys_start: chunk.keys_start,
             };
             #[cfg(feature = "telemetry")]
             {
@@ -273,8 +276,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             return PackedNeighborFrontier::ExactBatch(batch);
         }
 
-        out.clear();
-
         let dot_upper_bound = if self.stage == PackedQueryStage::Chunk0
             && self.prepared.tail_possible(self.query_index)
         {
@@ -286,8 +287,7 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         PackedNeighborFrontier::UnknownButBounded { dot_upper_bound }
     }
 
-    /// Consume the cached frontier. The caller-owned frontier buffer may be
-    /// cleared or reused after this call.
+    /// Consume the cached frontier. Any exact-key borrow must end before this call.
     pub(crate) fn advance_frontier(&mut self, grid: &CubeMapGrid) {
         let cached = self.cached_frontier.take();
         match cached {

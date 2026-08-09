@@ -153,7 +153,7 @@ impl Harness {
         let mut unseen: std::collections::HashSet<u32> = eligible.iter().copied().collect();
         let mut emitted: Vec<u32> = Vec::new();
         let mut emitted_set: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        let mut batch: Vec<u32> = Vec::new();
+        let mut batch: Vec<u64> = Vec::new();
 
         let best_unseen = |unseen: &std::collections::HashSet<u32>| -> f32 {
             // NEG_INFINITY when empty: any bound (including -inf) covers it.
@@ -166,7 +166,9 @@ impl Harness {
         loop {
             match stream.frontier(&mut batch) {
                 DirectedNeighborFrontier::ExactBatch(result) => {
-                    for &slot in &batch[..result.n] {
+                    let keys = stream.exact_keys(&batch);
+                    for &key in keys {
+                        let slot = crate::cube_grid::neighbor_key_slot(key);
                         assert!(
                             slot != query_slot,
                             "{name}: stream emitted the query slot itself"

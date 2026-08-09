@@ -1,4 +1,4 @@
-use super::helpers::{key_to_dot, key_to_idx, sort_keys_u64};
+use super::helpers::{key_to_dot, sort_keys_u64};
 use super::*;
 use crate::fp;
 
@@ -191,15 +191,28 @@ impl PackedKnnCellScratch {
         }
     }
 
+    pub(super) fn current_keys(
+        &self,
+        qi: usize,
+        stage: PackedStage,
+        start: usize,
+        n: usize,
+    ) -> &[u64] {
+        let keys = match stage {
+            PackedStage::Chunk0 => &self.chunk0_keys[qi],
+            PackedStage::Tail => &self.tail_keys[qi],
+        };
+        &keys[start..start + n]
+    }
+
     pub(super) fn next_chunk(
         &mut self,
         qi: usize,
         group_gen: u32,
         stage: PackedStage,
         k: usize,
-        out: &mut [u32],
     ) -> Option<PackedChunk> {
-        if k == 0 || out.is_empty() {
+        if k == 0 {
             return None;
         }
         let security_threshold = *self.security_thresholds.get(qi)?;
@@ -218,7 +231,7 @@ impl PackedKnnCellScratch {
             security_threshold
         } + crate::tolerances::GRID_DOT_BOUND_PAD;
 
-        let n_target = k.min(out.len());
+        let n_target = k;
 
         match stage {
             PackedStage::Chunk0 => {
@@ -229,7 +242,6 @@ impl PackedKnnCellScratch {
                     unsafe { self.chunk0_keys.get_unchecked_mut(qi) },
                     unsafe { self.chunk0_pos.get_unchecked_mut(qi) },
                     n_target,
-                    out,
                 )?;
                 let tail_possible = unsafe { *self.tail_possible.get_unchecked(qi) };
                 let post_chunk_bound = if tail_possible {
@@ -249,6 +261,7 @@ impl PackedKnnCellScratch {
                     n: run.n,
                     first_dot: run.first_dot,
                     unseen_bound,
+                    keys_start: run.keys_start,
                 })
             }
             PackedStage::Tail => {
@@ -262,7 +275,6 @@ impl PackedKnnCellScratch {
                     unsafe { self.tail_keys.get_unchecked_mut(qi) },
                     unsafe { self.tail_pos.get_unchecked_mut(qi) },
                     n_target,
-                    out,
                 )?;
                 let unseen_bound = if run.has_more {
                     run.last_dot.max(coverage_bound)
@@ -273,6 +285,7 @@ impl PackedKnnCellScratch {
                     n: run.n,
                     first_dot: run.first_dot,
                     unseen_bound,
+                    keys_start: run.keys_start,
                 })
             }
         }
@@ -287,12 +300,13 @@ struct EmittedRun {
     first_dot: f32,
     last_dot: f32,
     has_more: bool,
+    keys_start: usize,
 }
 
-/// The partition→sort→scatter→advance sequence shared by the Chunk0
+/// The partition→sort→retain→advance sequence shared by the Chunk0
 /// (small/large remainder) and Tail paths: take the top `n_target` of
-/// `keys[*pos..]`, sort them ascending, scatter their slot indices into
-/// `out`, and advance the cursor past what was emitted.
+/// `keys[*pos..]`, sort them ascending, retain that exact range for the consumer,
+/// and advance the cursor past what was emitted.
 ///
 /// `WHOLE_SORT_SMALL` (the Chunk0 small-remainder path): when the remainder
 /// is within 2× of `n_target`, skip the partition and sort it whole. This
@@ -306,7 +320,6 @@ fn emit_run<const WHOLE_SORT_SMALL: bool>(
     keys: &mut [u64],
     pos: &mut usize,
     n_target: usize,
-    out: &mut [u32],
 ) -> Option<EmittedRun> {
     let total = keys.len();
     let start = *pos;
@@ -326,9 +339,7 @@ fn emit_run<const WHOLE_SORT_SMALL: bool>(
         sort_keys_u64(&mut remaining[..n]);
         n
     };
-    for (dst, key) in out[..n].iter_mut().zip(remaining.iter()) {
-        *dst = key_to_idx(*key);
-    }
+    let keys_start = start;
     let first_dot = key_to_dot(remaining[0]);
     let last_dot = key_to_dot(remaining[n - 1]);
     *pos = start + n;
@@ -337,5 +348,6 @@ fn emit_run<const WHOLE_SORT_SMALL: bool>(
         first_dot,
         last_dot,
         has_more: *pos < total,
+        keys_start,
     })
 }

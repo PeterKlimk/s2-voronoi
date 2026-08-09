@@ -37,11 +37,6 @@ pub(super) fn sort_keys_u64(keys: &mut [u64]) {
 }
 
 #[inline]
-pub(super) fn key_to_idx(key: u64) -> u32 {
-    (key & 0xFFFF_FFFF) as u32
-}
-
-#[inline]
 fn ordered_u32_to_f32(val: u32) -> f32 {
     let b = if val & 0x8000_0000 != 0 {
         val ^ 0x8000_0000

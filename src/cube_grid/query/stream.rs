@@ -3,7 +3,7 @@ use crate::cube_grid::packed_knn::{
 };
 
 use super::shells::ShellFrontier;
-use super::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
+use super::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility, NeighborKey};
 use glam::Vec3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,22 +98,20 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         }
     }
 
-    /// Return the current frontier, writing an exact batch into caller-owned
-    /// `out` when this is the first probe of that frontier.
+    /// Return the current frontier.
     ///
-    /// Exact-frontier caching retains only [`DirectedNeighborBatch`] metadata,
-    /// not the emitted slots. Until [`Self::advance_frontier`] is called, a
-    /// repeated probe returns the same metadata without rewriting `out`; the
-    /// caller must therefore preserve both its length and contents. Bounded or
-    /// exhausted frontiers clear `out` and do not carry this requirement.
-    pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> DirectedNeighborFrontier {
+    /// Packed exact keys remain in packed-query scratch. Shell exact keys are
+    /// written to caller-owned `out`, which must remain unchanged until
+    /// [`Self::advance_frontier`]. Call [`Self::exact_keys`] to borrow either
+    /// representation uniformly. Bounded and exhausted frontiers clear `out`.
+    pub(crate) fn frontier(&mut self, out: &mut Vec<NeighborKey>) -> DirectedNeighborFrontier {
         if let Some(cached) = &self.cached_frontier {
             match cached {
                 CachedFrontier::ExactBatch(batch) => {
-                    debug_assert_eq!(
-                        out.len(),
-                        batch.n,
-                        "cached exact frontier must keep slots in the caller scratch buffer"
+                    debug_assert!(
+                        batch.source != DirectedNeighborBatchSource::ShellExpand
+                            || out.len() == batch.n,
+                        "cached shell frontier must keep keys in caller scratch"
                     );
                     return DirectedNeighborFrontier::ExactBatch(*batch);
                 }
@@ -133,8 +131,9 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         loop {
             match self.stage {
                 StreamStage::Packed => {
+                    out.clear();
                     let packed = self.packed_mut("frontier");
-                    match packed.frontier(out) {
+                    match packed.frontier() {
                         PackedNeighborFrontier::ExactBatch(batch) => {
                             let source = match batch.source {
                                 PackedNeighborBatchSource::Chunk0 => {
@@ -188,6 +187,22 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                     return DirectedNeighborFrontier::Exhausted;
                 }
             }
+        }
+    }
+
+    /// Borrow the keys for the cached exact frontier without copying packed keys.
+    pub(crate) fn exact_keys<'s>(&'s self, out: &'s [NeighborKey]) -> &'s [NeighborKey] {
+        let Some(CachedFrontier::ExactBatch(batch)) = self.cached_frontier.as_ref() else {
+            panic!("exact keys require a cached exact frontier");
+        };
+        match batch.source {
+            DirectedNeighborBatchSource::PackedChunk0 | DirectedNeighborBatchSource::PackedTail => {
+                self.packed
+                    .as_ref()
+                    .expect("packed exact frontier requires packed query")
+                    .exact_keys()
+            }
+            DirectedNeighborBatchSource::ShellExpand => &out[..batch.n],
         }
     }
 
@@ -371,16 +386,23 @@ mod tests {
 
         let mut batch = Vec::new();
         let first = stream.frontier(&mut batch);
-        let first_slots = batch.clone();
+        let first_keys = match first {
+            DirectedNeighborFrontier::ExactBatch(_) => stream.exact_keys(&batch).to_vec(),
+            _ => Vec::new(),
+        };
         let second = stream.frontier(&mut batch);
+        let second_keys = match second {
+            DirectedNeighborFrontier::ExactBatch(_) => stream.exact_keys(&batch).to_vec(),
+            _ => Vec::new(),
+        };
         assert_eq!(
             std::mem::discriminant(&first),
             std::mem::discriminant(&second),
             "repeated frontier call should return the same frontier kind without advancing"
         );
         assert_eq!(
-            batch, first_slots,
-            "repeated frontier call should return the same exact batch without advancing"
+            second_keys, first_keys,
+            "repeated frontier call should return the same exact keys without advancing"
         );
         assert!(!stream.takeover.is_initialized());
 
@@ -486,7 +508,9 @@ mod tests {
                             .unwrap_or(-1.0);
                         match stream.frontier(&mut batch) {
                             DirectedNeighborFrontier::ExactBatch(result) => {
-                                for &slot in &batch[..result.n] {
+                                let keys = stream.exact_keys(&batch);
+                                for &key in keys {
+                                    let slot = crate::cube_grid::neighbor_key_slot(key);
                                     let neighbor_idx = grid.point_indices()[slot as usize] as usize;
                                     seen[neighbor_idx] = true;
                                     let _ = result.source;

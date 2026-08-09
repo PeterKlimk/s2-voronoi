@@ -737,7 +737,7 @@ fn build_generator_grid(generators: &[Vec3]) -> CubeMapGrid {
 fn nearest_generator_index(
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    batch: &mut Vec<u32>,
+    batch: &mut Vec<u64>,
     query: Vec3,
 ) -> Option<usize> {
     grid.nearest_unrestricted_slot(query, scratch, batch)

@@ -56,7 +56,7 @@ impl ShellEligibility for UnrestrictedEligibility {
 /// The high word is the bitwise inverse of the standard ascending-total-order
 /// f32 key, so ascending `u64` order gives descending dot order. The low word
 /// is the slot, preserving the previous ascending-slot tie break exactly.
-type PendingKey = u64;
+type PendingKey = super::NeighborKey;
 
 #[inline]
 fn f32_to_ordered_u32(value: f32) -> u32 {
@@ -282,7 +282,7 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
     /// Current frontier: fills `out` with the pending layer's next sorted
     /// prefix (or the whole layer when small).
     /// Returns `None` when the traversal is exhausted.
-    pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> Option<ShellBatch> {
+    pub(crate) fn frontier(&mut self, out: &mut Vec<PendingKey>) -> Option<ShellBatch> {
         if !self.initialized {
             self.initialize();
         }
@@ -299,7 +299,7 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
         let end = self.pending_pos + self.pending_prefix_len;
         let prefix = &self.scratch.pending[self.pending_pos..end];
         out.clear();
-        out.extend(prefix.iter().map(|&key| pending_key_slot(key)));
+        out.extend_from_slice(prefix);
         let same_layer_bound = if end < self.scratch.pending.len() {
             pending_key_dot(prefix[self.pending_prefix_len - 1])
                 + crate::tolerances::GRID_DOT_BOUND_PAD
@@ -352,13 +352,13 @@ impl CubeMapGrid {
         &self,
         query: Vec3,
         scratch: &mut CubeMapGridScratch,
-        batch: &mut Vec<u32>,
+        batch: &mut Vec<PendingKey>,
     ) -> Option<u32> {
         let mut frontier =
             self.unrestricted_shell_frontier(query, self.point_indices.len(), scratch);
         let mut best: Option<(f32, u32)> = None;
         while let Some(layer) = frontier.frontier(batch) {
-            let candidate = (layer.first_dot, batch[0]);
+            let candidate = (layer.first_dot, pending_key_slot(batch[0]));
             if best.is_none_or(|(dot, _)| candidate.0 > dot) {
                 best = Some(candidate);
             }
@@ -386,7 +386,7 @@ mod tests {
         let mut result = Vec::new();
         while let Some(layer) = frontier.frontier(&mut batch) {
             result.push((
-                batch.clone(),
+                batch.iter().map(|&key| pending_key_slot(key)).collect(),
                 layer.first_dot.to_bits(),
                 layer.unseen_bound.to_bits(),
             ));
@@ -495,7 +495,8 @@ mod tests {
         unseen[query_idx] = false;
 
         while let Some(layer) = frontier.frontier(&mut batch) {
-            for &slot in &batch {
+            for &key in &batch {
+                let slot = pending_key_slot(key);
                 let idx = grid.point_indices()[slot as usize] as usize;
                 assert_ne!(idx, query_idx);
                 assert!(std::mem::replace(&mut unseen[idx], false));

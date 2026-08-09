@@ -118,7 +118,7 @@ pub struct SphereLocator {
     grid: CubeMapGrid,
     canonical: Option<Vec<u32>>,
     scratch: CubeMapGridScratch,
-    batch: Vec<u32>,
+    batch: Vec<u64>,
 }
 
 impl SphericalVoronoi {
@@ -245,7 +245,7 @@ fn sphere_locate_core(
     grid: &CubeMapGrid,
     canonical: Option<&[u32]>,
     scratch: &mut CubeMapGridScratch,
-    batch: &mut Vec<u32>,
+    batch: &mut Vec<u64>,
     query: Vec3,
 ) -> usize {
     let slot = grid

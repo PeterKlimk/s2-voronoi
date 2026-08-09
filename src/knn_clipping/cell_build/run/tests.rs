@@ -303,9 +303,9 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
         );
         consume_stream(
             &mut stream,
+            &mut ctx.frontier_keys,
             StreamPhase {
                 builder: &mut ctx.builder,
-                packed_chunk: &mut ctx.packed_chunk,
                 attempted_neighbors: &mut ctx.attempted_neighbors,
                 force_fallback_after_neighbors_processed: &mut ctx
                     .force_fallback_after_neighbors_processed,
@@ -313,7 +313,6 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
             points,
             pos_slots,
             generator_idx,
-            points[generator_idx],
             &mut trace,
             &mut counters,
         );
@@ -456,26 +455,26 @@ fn probe_early_extraction_cell(
         while !counters.terminated && !ctx.builder.is_failed() {
             let frontier = probe_frontier(
                 &mut stream,
-                &mut ctx.packed_chunk,
+                &mut ctx.frontier_keys,
                 &mut counters.used_knn,
                 &mut counters.knn_stage,
             );
 
             match frontier {
                 DirectedNeighborFrontier::ExactBatch(batch) => {
+                    let keys = stream.exact_keys(&ctx.frontier_keys);
                     clip_batch(
                         &mut StreamPhase {
                             builder: &mut ctx.builder,
-                            packed_chunk: &mut ctx.packed_chunk,
                             attempted_neighbors: &mut ctx.attempted_neighbors,
                             force_fallback_after_neighbors_processed: &mut ctx
                                 .force_fallback_after_neighbors_processed,
                         },
                         batch,
+                        keys,
                         points,
                         pos_slots,
                         generator_idx,
-                        points[generator_idx],
                         &mut trace,
                         &mut counters,
                     );
@@ -493,7 +492,7 @@ fn probe_early_extraction_cell(
                     {
                         counters.terminated = super::maybe_terminate_or_advance_frontier(
                             &mut stream,
-                            &mut ctx.packed_chunk,
+                            &mut ctx.frontier_keys,
                             &mut ctx.builder,
                             &mut counters,
                         );

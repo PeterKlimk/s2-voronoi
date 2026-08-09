@@ -74,9 +74,19 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
         qi: usize,
         stage: PackedStage,
         k: usize,
-        out: &mut [u32],
     ) -> Option<PackedChunk> {
-        self.scratch.next_chunk(qi, self.group_gen, stage, k, out)
+        self.scratch.next_chunk(qi, self.group_gen, stage, k)
+    }
+
+    #[inline]
+    pub(super) fn current_keys(
+        &self,
+        qi: usize,
+        stage: PackedStage,
+        start: usize,
+        n: usize,
+    ) -> &[u64] {
+        self.scratch.current_keys(qi, stage, start, n)
     }
 
     #[inline]

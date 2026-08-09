@@ -20,8 +20,8 @@ pub(crate) use packed_knn::PackedQuery;
 pub(crate) use projection::{cell_to_face_ij, face_uv_to_3d, st_to_uv};
 use projection::{face_uv_to_cell, point_to_face_uv};
 pub(crate) use query::{
-    DirectedEligibility, DirectedNeighborBatch, DirectedNeighborBatchSource,
-    DirectedNeighborFrontier, DirectedNeighborStream,
+    neighbor_key_dot, neighbor_key_slot, DirectedEligibility, DirectedNeighborBatch,
+    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, NeighborKey,
 };
 
 use glam::Vec3;

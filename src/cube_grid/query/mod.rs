@@ -16,6 +16,27 @@ use std::sync::Arc;
 
 use super::{face_uv_to_cell, point_to_face_uv, CubeMapGrid, CubeMapGridScratch, GridTopology};
 
+/// Exact nearest-neighbor ordering key carried between selection and consumers.
+/// The low word is the grid slot; the high word encodes descending f32 dot order.
+pub(crate) type NeighborKey = u64;
+
+#[inline(always)]
+pub(crate) fn neighbor_key_slot(key: NeighborKey) -> u32 {
+    key as u32
+}
+
+#[inline(always)]
+pub(crate) fn neighbor_key_dot(key: NeighborKey) -> f32 {
+    let desc = (key >> 32) as u32;
+    let ord = !desc;
+    let bits = if ord & 0x8000_0000 != 0 {
+        ord ^ 0x8000_0000
+    } else {
+        !ord
+    };
+    f32::from_bits(bits)
+}
+
 impl CubeMapGrid {
     /// Get cell index for a point.
     #[inline]
@@ -200,5 +221,34 @@ impl CubeMapGrid {
         let sin_d = (1.0 - cos_d * cos_d).max(0.0).sqrt();
         let max_dot_upper = (cos_d * cos_r + sin_d * sin_r).clamp(-1.0, 1.0);
         (2.0 - 2.0 * max_dot_upper) as f32
+    }
+}
+
+#[cfg(test)]
+mod neighbor_key_tests {
+    use super::{neighbor_key_dot, neighbor_key_slot, NeighborKey};
+
+    fn encode(dot: f32, slot: u32) -> NeighborKey {
+        let bits = dot.to_bits();
+        let ordered = if bits & 0x8000_0000 != 0 {
+            !bits
+        } else {
+            bits ^ 0x8000_0000
+        };
+        ((!ordered as u64) << 32) | u64::from(slot)
+    }
+
+    #[test]
+    fn neighbor_key_codec_preserves_finite_dot_bits_and_slot_ties() {
+        for dot in [-1.0f32, -0.5, -0.0, 0.0, f32::from_bits(1), 0.5, 1.0] {
+            for slot in [0, 1, u32::MAX] {
+                let key = encode(dot, slot);
+                assert_eq!(neighbor_key_dot(key).to_bits(), dot.to_bits());
+                assert_eq!(neighbor_key_slot(key), slot);
+            }
+        }
+
+        assert!(encode(0.75, 3) < encode(0.5, 3));
+        assert!(encode(0.5, 3) < encode(0.5, 4));
     }
 }

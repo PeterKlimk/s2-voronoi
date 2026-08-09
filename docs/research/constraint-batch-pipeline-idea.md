@@ -352,10 +352,10 @@ consumed-candidate reduction, not the sum of nominal skipped-tail lengths.
 
 ### Phase 5: deeper fusion only after attribution
 
-Remaining follow-ups include direct handoff from packed selection storage or an exact classifier
-whose unknown-lane evaluations feed the ordinary clip kernel instead of being discarded. Adaptive
-window width and reclassification after polygon progress need evidence that such a fused kernel
-first leaves a material residual cost.
+At the time of this experiment, remaining follow-ups included direct handoff from packed selection
+storage or an exact classifier whose unknown-lane evaluations fed the ordinary clip kernel instead
+of being discarded. Adaptive window width and reclassification after polygon progress required
+evidence that such a fused kernel first left a material residual cost.
 
 **Experiment result (2026-07-16): fused exact classifier rejected in eager and adaptive forms.**
 The prototype evaluated four prepared constraints across one current 3-to-8-vertex polygon,
@@ -384,6 +384,14 @@ revisited, the only credible shape is an outlined cold side exit taken after the
 path observes `Unchanged`, leaving the normal loop and clip-kernel code generation untouched. Its
 ceiling is small on corrected Fibonacci—only about 12.5k classified lanes per 100k cells—so it
 should first be justified by a workload with materially longer stable tails.
+
+**Independent handoff result (2026-08-09): direct retained-key borrowing accepted.** The packed
+selector's already-ordered `u64` keys are now borrowed directly by cell construction until frontier
+advance. This removes the selected-slot copy and reuses the stored successor dot without preparing
+constraints or speculating over a window. It improved ordinary whole-build cycles across
+single-thread, 16-worker, and 4M guardrails. See
+[`memory-layout-ideas.md`](memory-layout-ideas.md#8-borrow-retained-nearest-neighbor-keys-into-clipping--implemented-2026-08-09).
+This result closes the direct-storage handoff item above but does not revive any rejected classifier.
 
 ## Measurement plan
 

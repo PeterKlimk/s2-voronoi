@@ -811,6 +811,14 @@ modules without making the non-obvious code shape look accidental.
   checks. Small-N sorting networks beat `sort_unstable` by about 5% total time at 500k in their
   measured regime, while extracting the shared packed emit sequence out of line added 0.6%
   whole-build instructions; these helpers therefore retain their explicit inline boundaries.
+- **Direct selected-key handoff.** Packed selection keeps its ordered `u64` key ranges in per-query
+  scratch, and cell construction borrows those ranges until frontier advance instead of extracting a
+  caller-owned `u32` slot batch. The clip loop decodes the slot and reuses the stored successor dot.
+  Across paired native runs, 500k single-thread Fibonacci/uniform median cycles fell 1.5%/1.4%, 1M
+  16-worker cycles fell 1.1%/1.5%, and 4M 16-worker cycles fell 1.2%/1.5%; branch misses fell about
+  3.5--5.0%. Copying wider keys, only avoiding zero initialization, and moving cursors into the live
+  query did not reproduce the full gain. Preserve the retained-range lifetime and do not rematerialize
+  selected slots without a new end-to-end measurement.
 - **Small-sort helper placement and copy-back.** Seven forced-inline hints around the production
   small-sort helper chain were removed, and the 17-arm constant-length copy-back table became one
   direct variable-length copy. Nine paired 500k native Fibonacci/uniform runs changed instructions

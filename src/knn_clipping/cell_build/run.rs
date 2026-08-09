@@ -5,7 +5,8 @@ mod telemetry_detail;
 mod tests;
 
 use crate::cube_grid::{
-    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
+    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, NeighborKey,
+    PackedQuery,
 };
 use crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES;
 use crate::knn_clipping::topo2d::{BuilderFallbackTrigger, BuilderStepOutcome};
@@ -71,7 +72,7 @@ impl AttemptedNeighbors {
 pub(crate) struct CellBuildContext {
     builder: crate::knn_clipping::topo2d::Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
-    packed_chunk: Vec<u32>,
+    frontier_keys: Vec<NeighborKey>,
     output_buffer: CellOutputBuffer,
     attempted_neighbors: AttemptedNeighbors,
     #[cfg(test)]
@@ -88,7 +89,7 @@ impl CellBuildContext {
         Self {
             builder: crate::knn_clipping::topo2d::Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: grid.make_scratch(),
-            packed_chunk: Vec::with_capacity(policy.scratch_chunk_capacity()),
+            frontier_keys: Vec::with_capacity(policy.scratch_chunk_capacity()),
             output_buffer: CellOutputBuffer::with_capacity(MAX_POLY_VERTICES),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
             #[cfg(test)]
@@ -421,12 +422,15 @@ fn recover_unbounded_after_exhaustion(
     let mut seeded = false;
     let mut frontier = grid.unrestricted_shell_frontier(generator, generator_idx, &mut ctx.scratch);
 
-    while let Some(batch) = frontier.frontier(&mut ctx.packed_chunk) {
-        let slots = &ctx.packed_chunk[..batch.n];
-        counters.neighbors_processed += slots.len();
+    while let Some(batch) = frontier.frontier(&mut ctx.frontier_keys) {
+        let keys = &ctx.frontier_keys[..batch.n];
+        counters.neighbors_processed += keys.len();
 
         if !seeded {
-            seed_slots.extend_from_slice(slots);
+            seed_slots.extend(
+                keys.iter()
+                    .map(|&key| crate::cube_grid::neighbor_key_slot(key)),
+            );
             if seed_slots.len() >= 3 {
                 seeded = ctx
                     .builder
@@ -436,7 +440,8 @@ fn recover_unbounded_after_exhaustion(
                     }));
             }
         } else {
-            for &slot in slots {
+            for &key in keys {
+                let slot = crate::cube_grid::neighbor_key_slot(key);
                 let point = pos_slots[slot as usize];
                 if ctx
                     .builder
@@ -464,7 +469,6 @@ fn recover_unbounded_after_exhaustion(
 /// remaining fields are threaded explicitly).
 struct StreamPhase<'x> {
     builder: &'x mut crate::knn_clipping::topo2d::Topo2DBuilder,
-    packed_chunk: &'x mut Vec<u32>,
     attempted_neighbors: &'x mut AttemptedNeighbors,
     #[cfg(test)]
     force_fallback_after_neighbors_processed: &'x mut Option<usize>,
@@ -540,10 +544,10 @@ fn clip_seed_neighbors(
 fn clip_batch(
     phase: &mut StreamPhase<'_>,
     batch: crate::cube_grid::DirectedNeighborBatch,
+    keys: &[NeighborKey],
     points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
-    generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
@@ -551,10 +555,10 @@ fn clip_batch(
         DirectedNeighborBatchSource::ShellExpand => clip_batch_source::<true>(
             phase,
             batch,
+            keys,
             points,
             pos_slots,
             generator_idx,
-            generator,
             trace,
             counters,
         ),
@@ -562,10 +566,10 @@ fn clip_batch(
             clip_batch_source::<false>(
                 phase,
                 batch,
+                keys,
                 points,
                 pos_slots,
                 generator_idx,
-                generator,
                 trace,
                 counters,
             )
@@ -687,12 +691,11 @@ enum DirectBatchStop {
 #[allow(clippy::too_many_arguments)]
 fn clip_batch_direct<const SHELL: bool, B: DirectStreamBuilder>(
     builder: &mut B,
-    packed_chunk: &[u32],
+    frontier_keys: &[NeighborKey],
     attempted_neighbors: &mut AttemptedNeighbors,
     batch: crate::cube_grid::DirectedNeighborBatch,
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
-    generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
     start_pos: usize,
@@ -702,7 +705,7 @@ fn clip_batch_direct<const SHELL: bool, B: DirectStreamBuilder>(
     let mut prefix_consumed = start_pos;
     for pos in start_pos..batch.n {
         prefix_consumed = pos + 1;
-        let neighbor_slot = packed_chunk[pos];
+        let neighbor_slot = crate::cube_grid::neighbor_key_slot(frontier_keys[pos]);
         // One fused load gets both the global index and position from the
         // slot-ordered AoS instead of two scattered by-slot loads.
         let slot_point = pos_slots[neighbor_slot as usize];
@@ -770,18 +773,7 @@ fn clip_batch_direct<const SHELL: bool, B: DirectStreamBuilder>(
             && clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
         {
             let bound = if pos + 1 < batch.n {
-                let next_slot = packed_chunk[pos + 1];
-                // The next position comes from the same clustered AoS; this
-                // exact successor plus `unseen_bound` covers the full remainder.
-                let next = pos_slots[next_slot as usize].pos;
-                let next_dot = crate::fp::dot3_f32(
-                    generator.x,
-                    generator.y,
-                    generator.z,
-                    next.x,
-                    next.y,
-                    next.z,
-                );
+                let next_dot = crate::cube_grid::neighbor_key_dot(frontier_keys[pos + 1]);
                 complete_exact_bound(next_dot, batch.unseen_bound)
             } else {
                 batch.unseen_bound
@@ -814,14 +806,14 @@ fn clip_batch_direct<const SHELL: bool, B: DirectStreamBuilder>(
 fn clip_batch_source<const SHELL: bool>(
     phase: &mut StreamPhase<'_>,
     batch: crate::cube_grid::DirectedNeighborBatch,
+    keys: &[NeighborKey],
     points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
-    generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
-    let packed_chunk = &phase.packed_chunk[..batch.n];
+    let frontier_keys = keys;
     let mut start_pos = 0usize;
     let prefix_consumed;
 
@@ -833,12 +825,11 @@ fn clip_batch_source<const SHELL: bool>(
                 .expect("fallback mode must expose fallback builder");
             clip_batch_direct::<SHELL, _>(
                 builder,
-                packed_chunk,
+                frontier_keys,
                 phase.attempted_neighbors,
                 batch,
                 pos_slots,
                 generator_idx,
-                generator,
                 trace,
                 counters,
                 start_pos,
@@ -852,12 +843,11 @@ fn clip_batch_source<const SHELL: bool>(
                 .expect("gnomonic mode must expose gnomonic builder");
             clip_batch_direct::<SHELL, _>(
                 builder,
-                packed_chunk,
+                frontier_keys,
                 phase.attempted_neighbors,
                 batch,
                 pos_slots,
                 generator_idx,
-                generator,
                 trace,
                 counters,
                 start_pos,
@@ -905,31 +895,32 @@ fn clip_batch_source<const SHELL: bool>(
 #[inline(always)]
 fn consume_stream(
     stream: &mut DirectedNeighborStream<'_, '_, '_, '_>,
+    frontier_keys: &mut Vec<NeighborKey>,
     mut phase: StreamPhase<'_>,
     points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
-    generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
     while !counters.terminated && !phase.builder.is_failed() {
         let frontier = probe_frontier(
             stream,
-            phase.packed_chunk,
+            frontier_keys,
             &mut counters.used_knn,
             &mut counters.knn_stage,
         );
 
         match frontier {
             DirectedNeighborFrontier::ExactBatch(batch) => {
+                let keys = stream.exact_keys(frontier_keys);
                 clip_batch(
                     &mut phase,
                     batch,
+                    keys,
                     points,
                     pos_slots,
                     generator_idx,
-                    generator,
                     trace,
                     counters,
                 );
@@ -939,7 +930,7 @@ fn consume_stream(
                 {
                     counters.terminated = maybe_terminate_or_advance_frontier(
                         stream,
-                        phase.packed_chunk,
+                        frontier_keys,
                         phase.builder,
                         counters,
                     );
@@ -1062,9 +1053,9 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         );
         consume_stream(
             &mut stream,
+            &mut ctx.frontier_keys,
             StreamPhase {
                 builder: &mut ctx.builder,
-                packed_chunk: &mut ctx.packed_chunk,
                 attempted_neighbors: &mut ctx.attempted_neighbors,
                 #[cfg(test)]
                 force_fallback_after_neighbors_processed: &mut ctx
@@ -1073,7 +1064,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
             points,
             pos_slots,
             generator_idx,
-            generator,
             &mut trace,
             &mut counters,
         );

@@ -1,6 +1,6 @@
 use crate::cube_grid::{
     DirectedNeighborBatch, DirectedNeighborBatchSource, DirectedNeighborFrontier,
-    DirectedNeighborStream,
+    DirectedNeighborStream, NeighborKey,
 };
 
 /// Combine the best known dot in an exact batch remainder with the bound for
@@ -21,12 +21,12 @@ fn exact_frontier_bound(batch: DirectedNeighborBatch) -> f32 {
 #[inline(always)]
 pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
-    packed_chunk: &mut Vec<u32>,
+    frontier_keys: &mut Vec<NeighborKey>,
     used_knn: &mut bool,
     knn_stage: &mut crate::telemetry::KnnCellStage,
 ) -> DirectedNeighborFrontier {
     let takeover_before = stream.is_takeover_stage();
-    let frontier = stream.frontier(packed_chunk);
+    let frontier = stream.frontier(frontier_keys);
     let frontier_is_takeover = match frontier {
         DirectedNeighborFrontier::ExactBatch(batch) => {
             batch.source == DirectedNeighborBatchSource::ShellExpand
@@ -44,13 +44,13 @@ pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
 #[inline]
 pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
-    packed_chunk: &mut Vec<u32>,
+    frontier_keys: &mut Vec<NeighborKey>,
     builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
     counters: &mut super::BuildCounters,
 ) -> bool {
     let frontier = probe_frontier(
         stream,
-        packed_chunk,
+        frontier_keys,
         &mut counters.used_knn,
         &mut counters.knn_stage,
     );
