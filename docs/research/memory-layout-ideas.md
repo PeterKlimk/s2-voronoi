@@ -841,22 +841,37 @@ changed candidate/baseline geometric means as follows:
 | Uniform | 0.995 | 0.997 | 0.992 | 10/15 |
 
 At 4M, nine-pair geometric cycle ratios were 0.995/0.994 for Fibonacci/uniform; instructions and
-branches improved in every pair. Whole-build wall time was neutral-to-favorable on Fibonacci and
-favorable on uniform. The tradeoff is explicit: separately measured cache misses rose about 4.0%
-and 1.1% at 1M, falling to roughly 1.7% and 1.2% at 4M. The lower retained memory, lower cycles, and
-consistent retired-work reductions justify the shared storage despite that miss-count movement.
+branches improved in every pair. A later quiet-host 1M counter retest was neutral on Fibonacci
+(1.000 cycles) and favorable on uniform (0.993 cycles), with instructions and branches improving in
+every pair. Wall-clock retests remained layout- and size-sensitive: 1M total-time ratios were
+0.999/1.020 for Fibonacci/uniform, while 4M ratios were 1.005/0.990. Do not use those mixed wall
+samples as a throughput forecast. The tradeoff is explicit: separately measured cache misses rose
+about 4.0% and 1.1% at 1M, falling to roughly 1.7% and 1.2% at 4M. The materially lower retained
+memory and RSS, non-adverse cycle counters, and consistent retired-work reductions justify the
+shared storage despite that miss-count movement.
 
 A two-header swap variant preserved the old scratch layout and recovered the cache-miss counts, but
 added stage-swap/control work: 1M Fibonacci cycles regressed about 0.8% and instructions were
 neutral. Do not retain a second outer vector merely to influence allocation layout. Raw patches,
 telemetry comparisons, RSS samples, and counter tables are under `/tmp/s2-core-probes/`.
 
-### Remaining independent layout candidates
+### Closed adjacent layout probes
 
-The following are not implied wins and should remain separately gated:
+Do not collapse the packed-query and directed-stream frontier caches. The stream-level cache must
+remain because termination can probe the same pre-batch frontier repeatedly. A sole-stream-cache
+prototype preserved those semantics and reduced retired instructions about 0.3% and branches about
+0.8%, but grew `.text` by 724 bytes. On a quiet host, 1M/16-worker cycles were neutral on Fibonacci
+(0.998 geometric ratio, 5/9 favorable) and regressed 1.5% on uniform (1/9 favorable); total wall time
+also regressed about 1.3%/0.6%. The extra mapping/control representation loses despite fewer retired
+branches. Probe: `/tmp/s2-core-probes/frontier-single-cache-probe.patch`.
 
-- Collapse the duplicate packed-query and directed-stream frontier caches only if branch and text
-  size counters both improve; the stream-level cache remains required for repeated pre-batch probes.
+Do not merge `chunk0_pos` and `tail_pos` into one stage cursor. Their lifetimes are sequential, and
+the prototype reduced `.text` by 360 bytes plus cache references by 3--4% and cache misses by about
+1.4%. Those counter movements did not convert to latency: quiet 1M total wall time regressed
+1.6%/1.4% on Fibonacci/uniform, with cell construction about 2.6%/2.4% slower. Cycle ratios were
+small and mixed (0.998/0.996 at 1M and 1.002/0.997 at 4M). Preserve separate cursor arrays rather
+than changing hot scratch offsets for an unmeasurable allocation saving. Probe:
+`/tmp/s2-core-probes/shared-stage-cursor-probe.patch`.
 
 Do not retry moving the emitted cursor into `PackedQuery`: despite removing two normal-release cursor
 vectors, the measured additive prototype did not improve instructions and regressed cache behavior.

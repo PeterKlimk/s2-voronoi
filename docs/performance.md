@@ -824,8 +824,10 @@ modules without making the non-obvious code shape look accidental.
   reduced packed-key capacity peaks by 22--37% across Fibonacci, uniform, clustered, and mega;
   five 2M/16-worker clustered pairs reduced median peak RSS about 19.8 MiB (3.4%). Fifteen 1M
   16-worker Fibonacci/uniform pairs reduced geometric-mean cycles 0.8%/0.5%, instructions about
-  0.3%, and branches about 0.7--0.8%. Cache misses rose 4.0%/1.1%, so preserve this as a measured
-  memory-envelope and total-cycle result rather than assuming every cache counter improves.
+  0.3%, and branches about 0.7--0.8%. A later quiet-host counter retest was neutral/favorable, while
+  wall-clock ratios remained mixed across 1M and 4M. Cache misses rose 4.0%/1.1%, so preserve this
+  primarily as a measured memory-envelope and retired-work result rather than assuming every cache
+  counter or wall-time sample improves.
 - **Small-sort helper placement and copy-back.** Seven forced-inline hints around the production
   small-sort helper chain were removed, and the 17-arm constant-length copy-back table became one
   direct variable-length copy. Nine paired 500k native Fibonacci/uniform runs changed instructions
