@@ -794,10 +794,11 @@ Final native counter ratios (candidate/baseline, paired medians) were:
 All seven final-layout 500k single-thread cycle pairs favored the candidate for both ordinary
 distributions; six of seven 1M multithreaded pairs did. All seven 4M Fibonacci pairs and six of
 seven 4M uniform pairs favored it.
-Cache references and misses were neutral-to-favorable in the final layout, with the least decisive
-result being essentially neutral misses on 500k uniform and 1M Fibonacci. Clustered and `mega`
-guardrails remained cycle-neutral-to-favorable. Raw counter tables and the attribution patches are
-under `/tmp/s2-core-probes/`.
+Cache misses were neutral-to-favorable in the final layout. Cache references remained layout
+sensitive: paired medians ranged from about 2.1% higher at 500k single-thread uniform to 1.4% lower
+at 4M Fibonacci, while cycles consistently improved. Clustered and `mega` guardrails remained
+cycle-neutral-to-favorable. Raw counter tables and attribution patches are under
+`/tmp/s2-core-probes/`.
 
 This is the useful handoff fusion that the constraint-batch experiments did not test: it transfers
 already-retained selection data without preparing constraints, buffering clip metadata, widening
