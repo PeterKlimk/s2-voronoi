@@ -290,22 +290,15 @@ impl PackedKnnCellScratch {
         self.band_mode.clear();
 
         // Don't shrink `Vec<Vec<_>>` to avoid dropping inner buffers when group sizes vary.
-        if self.chunk0_keys.len() < num_queries {
-            self.chunk0_keys.resize_with(num_queries, Vec::new);
+        if self.query_keys.len() < num_queries {
+            self.query_keys.resize_with(num_queries, Vec::new);
         }
-        for v in &mut self.chunk0_keys[..num_queries] {
+        for v in &mut self.query_keys[..num_queries] {
             v.clear();
         }
         self.chunk0_pos.clear();
         self.chunk0_pos.resize(num_queries, 0);
 
-        // Same rationale as `chunk0_keys` above.
-        if self.tail_keys.len() < num_queries {
-            self.tail_keys.resize_with(num_queries, Vec::new);
-        }
-        for v in &mut self.tail_keys[..num_queries] {
-            v.clear();
-        }
         self.tail_pos.clear();
         self.tail_pos.resize(num_queries, 0);
         self.tail_possible.resize(num_queries, false);
@@ -365,8 +358,7 @@ impl PackedKnnCellScratch {
         let query_y = qy_src;
         let query_z = qz_src;
         let security_thresholds = &self.security_thresholds[..num_queries];
-        let chunk0_keys = &mut self.chunk0_keys[..num_queries];
-        let tail_keys = &mut self.tail_keys[..num_queries];
+        let chunk0_keys = &mut self.query_keys[..num_queries];
 
         // Dense center cell: band-prune the O(occ²) full scan. `band_radius`
         // is cell-level (it depends only on occupancy/extent), so compute once
@@ -603,11 +595,6 @@ impl PackedKnnCellScratch {
                 }
             }
         }
-        for qi in 0..num_queries {
-            if !tail_keys[qi].is_empty() {
-                self.tail_possible[qi] = true;
-            }
-        }
 
         // === Ring pass: collect "hi" candidates into chunk0.
         //
@@ -790,10 +777,8 @@ impl PackedKnnCellScratch {
             }
         }
         let chunk0_candidates = chunk0_keys.iter().map(Vec::len).sum::<usize>();
-        let keys = chunk0_keys.iter().map(Vec::len).sum::<usize>()
-            + tail_keys.iter().map(Vec::len).sum::<usize>();
-        let capacity = chunk0_keys.iter().map(Vec::capacity).sum::<usize>()
-            + tail_keys.iter().map(Vec::capacity).sum::<usize>();
+        let keys = chunk0_keys.iter().map(Vec::len).sum::<usize>();
+        let capacity = chunk0_keys.iter().map(Vec::capacity).sum::<usize>();
         telemetry.observe_key_storage(keys, capacity);
         telemetry.add_chunk0_keys(chunk0_candidates);
         telemetry.add_tail_possible_queries(

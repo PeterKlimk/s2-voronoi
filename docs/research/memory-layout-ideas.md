@@ -804,19 +804,67 @@ This is the useful handoff fusion that the constraint-batch experiments did not 
 already-retained selection data without preparing constraints, buffering clip metadata, widening
 the long-lived key store, or speculating past termination.
 
+## 9. Reuse chunk-zero key storage for lazy tails — implemented 2026-08-09
+
+Packed preparation previously retained two `Vec<u64>` allocations per query: `chunk0_keys` and a
+separate lazily filled `tail_keys`. Their payload lifetimes cannot overlap. A query reaches tail
+materialization only after `next_chunk` has exhausted chunk zero, emitted an
+`UnknownButBounded` frontier, failed termination on that bound, and advanced the bounded frontier.
+Exact-key borrows also prevent frontier advance while clipping still reads the old range.
+
+The scratch now owns one `query_keys` vector per query. It stores chunk-zero keys through initial
+emission, then is cleared without shrinking and reused if that query requests its tail. Separate
+chunk-zero and tail cursors remain, so this does not revive the rejected cursor-state experiment.
+A checked assertion pins the exhaustion precondition. Tail-transition tests force a low high-key
+budget and compare the complete emitted order and bounds with brute force. Telemetry counts are
+unchanged except for the intentionally smaller capacity measure.
+
+At 100k, packed-key capacity peaks fell as follows:
+
+| Distribution | Separate vectors | Reused vector | Reduction |
+|---|---:|---:|---:|
+| Fibonacci | 1,920 | 1,216 | 36.7% |
+| Uniform | 4,996 | 3,296 | 34.0% |
+| Clustered | 782,076 | 607,440 | 22.3% |
+| Mega | 250,352 | 178,944 | 28.5% |
+
+Five rotated 2M/16-worker clustered RSS pairs reduced median peak RSS from 598,588 KiB to
+578,296 KiB, about 19.8 MiB or 3.4%. Fibonacci and uniform RSS were effectively unchanged because
+other pipeline storage dominates their smaller key pools.
+
+With cycle/instruction events measured without counter multiplexing, fifteen 1M/16-worker pairs
+changed candidate/baseline geometric means as follows:
+
+| Distribution | Cycles | Instructions | Branches | Favorable cycle pairs |
+|---|---:|---:|---:|---:|
+| Fibonacci | 0.992 | 0.997 | 0.993 | 13/15 |
+| Uniform | 0.995 | 0.997 | 0.992 | 10/15 |
+
+At 4M, nine-pair geometric cycle ratios were 0.995/0.994 for Fibonacci/uniform; instructions and
+branches improved in every pair. Whole-build wall time was neutral-to-favorable on Fibonacci and
+favorable on uniform. The tradeoff is explicit: separately measured cache misses rose about 4.0%
+and 1.1% at 1M, falling to roughly 1.7% and 1.2% at 4M. The lower retained memory, lower cycles, and
+consistent retired-work reductions justify the shared storage despite that miss-count movement.
+
+A two-header swap variant preserved the old scratch layout and recovered the cache-miss counts, but
+added stage-swap/control work: 1M Fibonacci cycles regressed about 0.8% and instructions were
+neutral. Do not retain a second outer vector merely to influence allocation layout. Raw patches,
+telemetry comparisons, RSS samples, and counter tables are under `/tmp/s2-core-probes/`.
+
 ### Remaining independent layout candidates
 
 The following are not implied wins and should remain separately gated:
 
-- Reuse an exhausted query's `chunk0_keys[qi]` allocation for its lazily materialized tail; those
-  payload lifetimes do not overlap, but clustered allocation counts must first show a useful ceiling.
-- Compile `center_tail_counts` storage and writes only with `telemetry` if disassembly confirms they
-  survive normal release optimization.
 - Collapse the duplicate packed-query and directed-stream frontier caches only if branch and text
   size counters both improve; the stream-level cache remains required for repeated pre-batch probes.
 
 Do not retry moving the emitted cursor into `PackedQuery`: despite removing two normal-release cursor
 vectors, the measured additive prototype did not improve instructions and regressed cache behavior.
+
+Do not retry a zero-sized normal-release `center_tail_counts` stream. It removed the payload
+allocation and allowed count work to optimize away, but was neutral single-threaded and
+neutral-to-adverse with 16 workers; Fibonacci cache misses rose about 4%. A duplicated cfg-specific
+center loop is not justified by that ceiling.
 
 ## Ideas currently disfavored
 

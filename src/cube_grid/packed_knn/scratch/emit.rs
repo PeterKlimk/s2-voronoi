@@ -43,8 +43,14 @@ impl PackedKnnCellScratch {
         let qz_s = grid.cell_points_z[query_slot_usize];
         let security_threshold = self.security_thresholds[qi];
         let threshold = self.thresholds[qi];
-        let tail_keys = &mut self.tail_keys[qi];
-        let old_len = tail_keys.len();
+        debug_assert_eq!(
+            self.chunk0_pos[qi],
+            self.query_keys[qi].len(),
+            "tail materialization requires an exhausted chunk-zero stream"
+        );
+        let tail_keys = &mut self.query_keys[qi];
+        tail_keys.clear();
+        let old_len = 0;
         let PackedCellRange {
             soa_start: center_start,
             soa_end: center_end,
@@ -176,14 +182,10 @@ impl PackedKnnCellScratch {
         let ring_added = tail_keys.len() - ring_old_len;
         telemetry.add_ring_tail_rescan(ring_added == 0, ring_dot_evaluations);
         let tail_empty = tail_keys.is_empty();
-        let capacity = self.chunk0_keys[..query_count]
+        let capacity = self.query_keys[..query_count]
             .iter()
             .map(Vec::capacity)
-            .sum::<usize>()
-            + self.tail_keys[..query_count]
-                .iter()
-                .map(Vec::capacity)
-                .sum::<usize>();
+            .sum::<usize>();
         telemetry.observe_key_storage(added, capacity);
 
         if tail_empty {
@@ -199,8 +201,7 @@ impl PackedKnnCellScratch {
         n: usize,
     ) -> &[u64] {
         let keys = match stage {
-            PackedStage::Chunk0 => &self.chunk0_keys[qi],
-            PackedStage::Tail => &self.tail_keys[qi],
+            PackedStage::Chunk0 | PackedStage::Tail => &self.query_keys[qi],
         };
         &keys[start..start + n]
     }
@@ -216,9 +217,8 @@ impl PackedKnnCellScratch {
             return None;
         }
         let security_threshold = *self.security_thresholds.get(qi)?;
-        debug_assert!(qi < self.chunk0_keys.len());
+        debug_assert!(qi < self.query_keys.len());
         debug_assert!(qi < self.chunk0_pos.len());
-        debug_assert!(qi < self.tail_keys.len());
         debug_assert!(qi < self.tail_pos.len());
         debug_assert!(qi < self.tail_possible.len());
         debug_assert!(qi < self.thresholds.len());
@@ -239,7 +239,7 @@ impl PackedKnnCellScratch {
                 // the successful `security_thresholds` lookup above proves
                 // that `qi` belongs to the prepared group.
                 let run = emit_run::<true>(
-                    unsafe { self.chunk0_keys.get_unchecked_mut(qi) },
+                    unsafe { self.query_keys.get_unchecked_mut(qi) },
                     unsafe { self.chunk0_pos.get_unchecked_mut(qi) },
                     n_target,
                 )?;
@@ -272,7 +272,7 @@ impl PackedKnnCellScratch {
                 // SAFETY: these arrays share the prepared-group sizing
                 // invariant established above.
                 let run = emit_run::<false>(
-                    unsafe { self.tail_keys.get_unchecked_mut(qi) },
+                    unsafe { self.query_keys.get_unchecked_mut(qi) },
                     unsafe { self.tail_pos.get_unchecked_mut(qi) },
                     n_target,
                 )?;

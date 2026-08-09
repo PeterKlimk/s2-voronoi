@@ -137,7 +137,7 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
     const N: usize = 384;
     const RES: usize = 10;
     const EPS: f32 = 1e-5;
-
+    let mut tail_transitions = 0usize;
     for &seed in &[11u64, 37] {
         let points = random_unit_points(N, seed);
         let grid = CubeMapGrid::new(&points, RES);
@@ -159,7 +159,7 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
             start as u32,
             layout,
         );
-        let mut scratch = PackedKnnCellScratch::new();
+        let mut scratch = PackedKnnCellScratch::new_with_hi_policy(1, 0);
         let mut telemetry = PackedKnnTelemetry::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
             scratch.prepare_group_directed(&grid, group, &mut telemetry)
@@ -206,7 +206,13 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
                         }
                     }
                     None if stage == PackedStage::Chunk0 && prepared.tail_possible(qi) => {
+                        assert_eq!(
+                            prepared.scratch.chunk0_pos[qi],
+                            prepared.scratch.query_keys[qi].len(),
+                            "tail transition requires an exhausted chunk-zero range"
+                        );
                         prepared.ensure_tail_directed_for(qi, &grid, &mut telemetry);
+                        tail_transitions += 1;
                         stage = PackedStage::Tail;
                     }
                     None => break,
@@ -219,6 +225,10 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
             );
         }
     }
+    assert!(
+        tail_transitions > 0,
+        "fixture must exercise lazy tail reuse"
+    );
 }
 
 #[test]

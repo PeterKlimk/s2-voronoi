@@ -19,8 +19,9 @@ const MAX_AGGREGATE_CANDIDATE_WORK: usize = 1 << 20;
 pub(crate) struct PackedKnnCellScratch {
     cell_ranges: Vec<PackedCellRange>,
     next_group_gen: u32,
-    chunk0_keys: Vec<Vec<u64>>,
-    tail_keys: Vec<Vec<u64>>,
+    /// Per-query key storage: chunk-zero keys during preparation/initial emission,
+    /// then reused for a lazily requested tail after chunk zero is exhausted.
+    query_keys: Vec<Vec<u64>>,
     chunk0_pos: Vec<usize>,
     tail_pos: Vec<usize>,
     tail_possible: Vec<bool>,
@@ -133,10 +134,10 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
                     .get(qi)
                     .copied()
                     .unwrap_or(0);
+                unused_chunk0_keys += self.scratch.query_keys[qi]
+                    .len()
+                    .saturating_sub(self.scratch.chunk0_pos[qi]);
             }
-            unused_chunk0_keys += self.scratch.chunk0_keys[qi]
-                .len()
-                .saturating_sub(self.scratch.chunk0_pos[qi]);
         }
         telemetry.add_unused_center_tail_keys(unused_center_keys);
         telemetry.add_unused_chunk0_keys(unused_chunk0_keys);
@@ -153,8 +154,7 @@ impl PackedKnnCellScratch {
         Self {
             cell_ranges: Vec::with_capacity(9),
             next_group_gen: 1,
-            chunk0_keys: Vec::new(),
-            tail_keys: Vec::new(),
+            query_keys: Vec::new(),
             chunk0_pos: Vec::new(),
             tail_pos: Vec::new(),
             tail_possible: Vec::new(),
