@@ -37,7 +37,27 @@ and 16 active contexts, the retained visitation tables alone are approximately 1
 The same mechanism is useful without parallelism: four pinned 1M Fibonacci pairs reduced cycles
 and task-clock by 0.76% and instructions by 0.20%, while retaining one approximately 4 MB table.
 
+## September 2026 construction counters
+
+Sharing boundary-constraint lookups, compacting accepted constraint records, and
+sorting only unresolved native vertex keys reduced construction instructions by
+another 2.43% on 1M Fibonacci and 2.21% on 1M uniform inputs. Combined with
+edge-derived clipping provenance, the cumulative reductions are 3.35% and 3.23%
+against the session baseline. These are native whole-process retired-instruction
+counts, not equivalent elapsed-time claims. Portable follow-up reductions are
+1.43% and 1.30%; native controls also improve at 16 workers and 4M points. See the
+[experiment record](internal/september-2026-optimization.md#construction-follow-up-fibonacci-and-uniform-priority)
+for baselines, counter methodology, secondary distributions, and validation.
+
 ## Point-location queries
+
+Point location reduces each complete shell layer to its nearest key without sorting
+the other candidates. September 2026 native counter comparisons at 100k generators
+and one million canonical queries removed about 42% of whole-process instructions;
+the query loop took roughly half the time on uniform and Fibonacci inputs. Sparse
+inputs benefit less. Exact tie ordering and shell certificates are preserved; see
+the [experiment record](internal/september-2026-optimization.md) and
+`cargo run --release --example bench_locator -- 100000 250000 4 uniform`.
 
 `SphereLocator::locate` accepts arbitrary finite, nonzero f32 directions and therefore validates
 and normalizes each raw query in f64. `locate_many` first materializes a canonical 12-byte direction

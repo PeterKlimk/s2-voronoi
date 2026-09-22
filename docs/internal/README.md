@@ -8,6 +8,8 @@ guidance remain in the parent directory: `architecture.md`, `correctness.md`, `p
 
 ## Closed evidence
 
+- [`september-2026-optimization.md`](september-2026-optimization.md): nearest-only
+  point location, redundant clipping metadata removal, counters, and rejected probes.
 - [`code-quality-closeout.md`](code-quality-closeout.md): consolidated decisions, measurements,
   retained boundaries, and reopening conditions from the July 2026 layout and phase inventories.
 - [`code-quality-plan.md`](code-quality-plan.md): complete QUAL-001 plan and final disposition.
