@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <array>
 
 struct Point3f {
   float x;
@@ -44,6 +46,22 @@ inline std::uint64_t hash_mix(std::uint64_t hash, std::uint64_t value) {
 inline std::uint64_t hash_double(std::uint64_t hash, double value) {
   return hash_mix(hash, std::bit_cast<std::uint64_t>(value));
 }
+
+struct TopologyFingerprint {
+  std::uint64_t sum = 0;
+  std::uint64_t xor_value = 0;
+
+  void observe(std::uint32_t a, std::uint32_t b, std::uint32_t c) {
+    std::array<std::uint32_t, 3> face{a, b, c};
+    std::sort(face.begin(), face.end());
+    std::uint64_t hash = 0xbb67ae8584caa73bULL;
+    for (const std::uint32_t index : face) {
+      hash = hash_mix(hash, index);
+    }
+    sum += hash;
+    xor_value ^= hash;
+  }
+};
 
 inline int parse_repeat(int argc, char** argv) {
   if (argc == 2) {

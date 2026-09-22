@@ -29,6 +29,38 @@ def uniform(n: int, seed: int) -> np.ndarray:
     radius = np.sqrt(1.0 - z * z)
     return np.column_stack((radius * np.cos(theta), z, radius * np.sin(theta)))
 
+def stereographic_grid(n: int, seed: int, jitter: bool) -> np.ndarray:
+    """Map a planar raster back to S2 with the north pole as projection pole."""
+    count = n - 1
+    side = int(np.ceil(np.sqrt(count)))
+    spacing = 2.0 / max(side - 1, 1)
+    indices = np.arange(count, dtype=np.int64)
+    u = -1.0 + spacing * (indices % side)
+    v = -1.0 + spacing * (indices // side)
+    if jitter:
+        rng = np.random.default_rng(seed)
+        amplitude = spacing * 1e-3
+        u += rng.uniform(-amplitude, amplitude, count)
+        v += rng.uniform(-amplitude, amplitude, count)
+
+    radius_squared = u * u + v * v
+    denominator = radius_squared + 1.0
+    points = np.empty((n, 3), dtype=np.float64)
+    points[0] = (0.0, 0.0, 1.0)
+    points[1:, 0] = -2.0 * v / denominator
+    points[1:, 1] = 2.0 * u / denominator
+    points[1:, 2] = (radius_squared - 1.0) / denominator
+    return points
+
+def planar_grid(n: int) -> np.ndarray:
+    """Create an exact integer raster for Fade2D predicate measurements."""
+    side = int(np.ceil(np.sqrt(n)))
+    indices = np.arange(n, dtype=np.int64)
+    points = np.ones((n, 3), dtype=np.float64)
+    points[:, 0] = indices % side
+    points[:, 1] = indices // side
+    return points
+
 
 def repair_duplicate_f32_points(points: np.ndarray, seed: int) -> tuple[np.ndarray, int]:
     """Deterministically resample sites that collide after f32 conversion."""
@@ -58,15 +90,37 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument("count", type=parse_count)
-    parser.add_argument("--dist", choices=("fib", "uniform"), default="fib")
+    parser.add_argument(
+        "--dist",
+        choices=(
+            "fib",
+            "uniform",
+            "stereo-grid",
+            "stereo-grid-jitter",
+            "planar-grid",
+        ),
+        default="fib",
+    )
     parser.add_argument("--seed", type=int, default=12345)
     args = parser.parse_args()
 
-    points = fibonacci(args.count) if args.dist == "fib" else uniform(args.count, args.seed)
+    if args.dist == "fib":
+        points = fibonacci(args.count)
+    elif args.dist == "uniform":
+        points = uniform(args.count, args.seed)
+    elif args.dist == "planar-grid":
+        points = planar_grid(args.count)
+    else:
+        points = stereographic_grid(
+            args.count, args.seed, args.dist == "stereo-grid-jitter"
+        )
     points, repaired = repair_duplicate_f32_points(points, args.seed)
-    lengths = np.linalg.norm(points.astype(np.float64), axis=1)
-    if not np.all(np.isfinite(points)) or np.max(np.abs(lengths - 1.0)) > 1e-6:
-        raise RuntimeError("generated points are not finite unit vectors")
+    if not np.all(np.isfinite(points)):
+        raise RuntimeError("generated points are not finite")
+    if args.dist != "planar-grid":
+        lengths = np.linalg.norm(points.astype(np.float64), axis=1)
+        if np.max(np.abs(lengths - 1.0)) > 1e-6:
+            raise RuntimeError("generated points are not unit vectors")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     points.tofile(args.output)
     print(

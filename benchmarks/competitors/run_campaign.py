@@ -32,6 +32,7 @@ def commands(
     stripack_bin: Path,
     vortex_bin: Path,
     vortex_neighbors: int,
+    fade2d_bin: Path,
 ) -> dict[str, list[str]]:
     prefix = ["taskset", "-c", cpus]
     return {
@@ -41,6 +42,16 @@ def commands(
             f"RAYON_NUM_THREADS={threads}",
             str(ROOT / "target/competitors/rust/release/bench_compare"),
             str(data),
+            "--repeat",
+            str(repeat),
+        ],
+        "s2-voronoi-preprocess": prefix
+        + [
+            "env",
+            f"RAYON_NUM_THREADS={threads}",
+            str(ROOT / "target/competitors/rust/release/bench_compare"),
+            str(data),
+            "--preprocess",
             "--repeat",
             str(repeat),
         ],
@@ -70,6 +81,56 @@ def commands(
             str(stripack_bin),
             str(data),
             "--construct-only",
+            "--repeat",
+            str(repeat),
+        ],
+        "fade2d-stereo": prefix
+        + [
+            str(fade2d_bin),
+            str(data),
+            "--threads",
+            str(threads),
+            "--repeat",
+            str(repeat),
+        ],
+        "fade2d-stereo-fast": prefix
+        + [
+            str(fade2d_bin),
+            str(data),
+            "--fast",
+            "--threads",
+            str(threads),
+            "--repeat",
+            str(repeat),
+        ],
+        "fade2d-raster": prefix
+        + [
+            str(fade2d_bin),
+            str(data),
+            "--raw-plane",
+            "--threads",
+            str(threads),
+            "--repeat",
+            str(repeat),
+        ],
+        "fade2d-raster-fast": prefix
+        + [
+            str(fade2d_bin),
+            str(data),
+            "--raw-plane",
+            "--fast",
+            "--threads",
+            str(threads),
+            "--repeat",
+            str(repeat),
+        ],
+        "fade2d-native": prefix
+        + [
+            str(fade2d_bin),
+            str(data),
+            "--native-plane",
+            "--threads",
+            str(threads),
             "--repeat",
             str(repeat),
         ],
@@ -171,17 +232,44 @@ def run_one(command: list[str]) -> tuple[list[dict[str, str]], dict[str, str], s
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sizes", nargs="+", default=["10k", "100k"])
-    parser.add_argument("--dist", choices=("fib", "uniform"), default="fib")
+    parser.add_argument(
+        "--dist",
+        choices=(
+            "fib", "uniform", "stereo-grid", "stereo-grid-jitter", "planar-grid"
+        ),
+        default="fib",
+    )
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--rounds", type=int, default=7)
     parser.add_argument("--inner-repeat", type=int, default=1)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--cpus", default="0")
-    parser.add_argument("--backends", nargs="+",
-                        choices=("s2-voronoi", "cgal", "qhull", "stripack",
-                                 "stripack-construct", "vortex", "vortex-construct"),
-                        default=["s2-voronoi", "cgal", "qhull", "stripack-construct",
-                                 "vortex-construct"])
+    parser.add_argument(
+        "--backends",
+        nargs="+",
+        choices=(
+            "s2-voronoi",
+            "s2-voronoi-preprocess",
+            "cgal",
+            "qhull",
+            "stripack",
+            "stripack-construct",
+            "fade2d-stereo",
+            "fade2d-stereo-fast",
+            "fade2d-native",
+            "fade2d-raster",
+            "fade2d-raster-fast",
+            "vortex",
+            "vortex-construct",
+        ),
+        default=[
+            "s2-voronoi",
+            "cgal",
+            "qhull",
+            "stripack-construct",
+            "vortex-construct",
+        ],
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--qhull-bin",
@@ -199,6 +287,11 @@ def main() -> None:
         default=ROOT / "target/competitors/vortex-make-t16/bin/bench_vortex_sphere",
     )
     parser.add_argument("--vortex-neighbors", type=int, default=50)
+    parser.add_argument(
+        "--fade2d-bin",
+        type=Path,
+        default=ROOT / "target/competitors/build/bench_fade2d_sphere",
+    )
     args = parser.parse_args()
     if (args.rounds < 1 or args.inner_repeat < 1 or args.threads < 1
             or args.vortex_neighbors < 1):
@@ -213,10 +306,12 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "dist", "size", "round", "order", "threads", "cpus", "backend", "n",
-        "iteration", "construct_ms", "materialize_ms", "total_ms", "vertices", "cells",
-        "incidences", "n_neighbors", "checksum", "cycles", "instructions", "cache-references",
-        "failures", "cache-misses", "page-faults", "context-switches", "cpu-migrations",
-        "max_rss_kib",
+        "iteration", "construct_ms", "project_ms", "triangulate_ms",
+        "materialize_ms", "total_ms", "validation_ms", "vertices", "cells",
+        "incidences", "n_neighbors", "workers", "fast_mode", "validated",
+        "topology_sum", "topology_xor", "checksum", "cycles", "instructions",
+        "cache-references", "failures", "cache-misses", "page-faults",
+        "context-switches", "cpu-migrations", "max_rss_kib",
     ]
 
     with output.open("w", newline="") as stream:
@@ -234,6 +329,7 @@ def main() -> None:
                 args.stripack_bin.resolve(),
                 args.vortex_bin.resolve(),
                 args.vortex_neighbors,
+                args.fade2d_bin.resolve(),
             )
 
             for backend in args.backends:
@@ -256,7 +352,11 @@ def main() -> None:
                             "round": round_number,
                             "order": order_number,
                             "threads": args.threads if backend in (
-                                "s2-voronoi", "vortex", "vortex-construct") else 1,
+                                "s2-voronoi", "s2-voronoi-preprocess",
+                                "fade2d-native", "fade2d-raster",
+                                "fade2d-raster-fast", "fade2d-stereo",
+                                "fade2d-stereo-fast", "vortex",
+                                "vortex-construct") else 1,
                             "cpus": args.cpus,
                             **result,
                             **counters,

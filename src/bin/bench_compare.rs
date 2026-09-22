@@ -13,6 +13,14 @@ struct Args {
 
     #[arg(long, default_value_t = 1)]
     repeat: usize,
+
+    /// Include an order-independent Delaunay-face fingerprint for validation.
+    #[arg(long)]
+    topology: bool,
+
+    /// Include the production near-coincident preprocessing pass.
+    #[arg(long)]
+    preprocess: bool,
 }
 
 fn read_points(path: &str) -> Result<Vec<[f32; 3]>, String> {
@@ -39,13 +47,37 @@ fn mix(hash: u64, value: u64) -> u64 {
         .wrapping_add(hash >> 2)
 }
 
+fn topology_fingerprint(triangles: &mut [[u32; 3]]) -> (u64, u64) {
+    let mut sum = 0u64;
+    let mut xor = 0u64;
+    for triangle in triangles {
+        triangle.sort_unstable();
+        let mut hash = 0xbb67_ae85_84ca_a73b_u64;
+        for &index in triangle.iter() {
+            hash = mix(hash, index as u64);
+        }
+        sum = sum.wrapping_add(hash);
+        xor ^= hash;
+    }
+    (sum, xor)
+}
+
 fn main() -> Result<(), String> {
     let args = Args::parse();
     if args.repeat == 0 {
         return Err("--repeat must be positive".into());
     }
     let points = read_points(&args.input)?;
-    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
+    let config = VoronoiConfig::default().with_preprocess_mode(if args.preprocess {
+        PreprocessMode::Weld
+    } else {
+        PreprocessMode::Disabled
+    });
+    let backend = if args.preprocess {
+        "s2-voronoi-preprocess"
+    } else {
+        "s2-voronoi"
+    };
 
     for iteration in 1..=args.repeat {
         let start = Instant::now();
@@ -69,19 +101,42 @@ fn main() -> Result<(), String> {
             }
         }
         black_box(checksum);
+        let topology = args.topology.then(|| {
+            let mut triangles = diagram.delaunay_triangles();
+            topology_fingerprint(&mut triangles)
+        });
         let materialize_ms = materialize_start.elapsed().as_secs_f64() * 1_000.0;
-        println!(
-            "RESULT backend=s2-voronoi n={} iteration={} construct_ms={:.6} materialize_ms={:.6} total_ms={:.6} vertices={} cells={} incidences={} checksum={:x}",
-            points.len(),
-            iteration,
-            construct_ms,
-            materialize_ms,
-            construct_ms + materialize_ms,
-            diagram.num_vertices(),
-            diagram.num_cells(),
-            incidences,
-            checksum,
-        );
+        if let Some((topology_sum, topology_xor)) = topology {
+            println!(
+                "RESULT backend={} n={} iteration={} construct_ms={:.6} materialize_ms={:.6} total_ms={:.6} vertices={} cells={} incidences={} topology_sum={:x} topology_xor={:x} checksum={:x}",
+                backend,
+                points.len(),
+                iteration,
+                construct_ms,
+                materialize_ms,
+                construct_ms + materialize_ms,
+                diagram.num_vertices(),
+                diagram.num_cells(),
+                incidences,
+                topology_sum,
+                topology_xor,
+                checksum,
+            );
+        } else {
+            println!(
+                "RESULT backend={} n={} iteration={} construct_ms={:.6} materialize_ms={:.6} total_ms={:.6} vertices={} cells={} incidences={} checksum={:x}",
+                backend,
+                points.len(),
+                iteration,
+                construct_ms,
+                materialize_ms,
+                construct_ms + materialize_ms,
+                diagram.num_vertices(),
+                diagram.num_cells(),
+                incidences,
+                checksum,
+            );
+        }
     }
     Ok(())
 }
