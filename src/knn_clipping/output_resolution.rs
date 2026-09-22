@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use glam::Vec3;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::cell_layout::{CellSpanError, LiveCellLayout};
 use crate::diagram::VoronoiCell;
 use crate::OutputResolutionReport;
 
@@ -89,21 +90,24 @@ fn cell_span<'a>(
     cells: &[VoronoiCell],
     cell_indices: &'a [u32],
 ) -> Result<&'a [u32], crate::VoronoiError> {
-    let cell = cells.get(cell_idx).ok_or_else(|| {
-        state_error(format!(
-            "output resolution referenced out-of-range cell {cell_idx}"
-        ))
-    })?;
-    let start = cell.vertex_start();
-    let end = start
-        .checked_add(cell.vertex_count())
-        .ok_or_else(|| state_error("output-resolution cell span overflow"))?;
-    cell_indices.get(start..end).ok_or_else(|| {
-        state_error(format!(
-            "output-resolution cell {cell_idx} span [{start}..{end}) exceeds index buffer len {}",
-            cell_indices.len()
-        ))
-    })
+    LiveCellLayout::new(cells, cell_indices)
+        .checked_span(cell_idx)
+        .map_err(|error| match error {
+            CellSpanError::CellOutOfBounds { .. } => state_error(format!(
+                "output resolution referenced out-of-range cell {cell_idx}"
+            )),
+            CellSpanError::SpanEndOverflow { .. } => {
+                state_error("output-resolution cell span overflow")
+            }
+            CellSpanError::SpanOutOfBounds {
+                start,
+                end,
+                index_count,
+                ..
+            } => state_error(format!(
+                "output-resolution cell {cell_idx} span [{start}..{end}) exceeds index buffer len {index_count}"
+            )),
+        })
 }
 
 /// Return each undirected edge whose distinct endpoint ids have exactly equal
@@ -264,6 +268,77 @@ fn rewrite_cycle(
         }
     }
     Ok(rewritten)
+}
+
+struct GroupClassification {
+    groups: Vec<Vec<usize>>,
+    failures: Vec<Option<RewriteFailure>>,
+    cells_by_group: Vec<Vec<usize>>,
+    cell_killing_cells: Vec<usize>,
+}
+
+/// Classify every interaction-connected component group in one cell pass.
+///
+/// One cell can touch at most one group. A cell-killing rewrite dominates a
+/// non-simple rewrite so every policy makes the same group-level decision.
+fn classify_interaction_groups(
+    components: &[ZeroComponent],
+    component_for_vertex: &FxHashMap<u32, usize>,
+    candidate_cells: &[usize],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> Result<GroupClassification, crate::VoronoiError> {
+    let groups = interaction_groups(
+        components,
+        component_for_vertex,
+        candidate_cells,
+        cells,
+        cell_indices,
+    )?;
+    let mut group_for_component = vec![usize::MAX; components.len()];
+    for (group_idx, group) in groups.iter().enumerate() {
+        for &component_idx in group {
+            group_for_component[component_idx] = group_idx;
+        }
+    }
+
+    let mut failures = vec![None; groups.len()];
+    let mut cells_by_group = vec![Vec::<usize>::new(); groups.len()];
+    let mut cell_killing_cells = Vec::new();
+    for &cell_idx in candidate_cells {
+        let span = cell_span(cell_idx, cells, cell_indices)?;
+        let mut touched_group = None;
+        let rewritten = rewrite_cycle(span, |vertex| {
+            let Some(&component_idx) = component_for_vertex.get(&vertex) else {
+                return vertex;
+            };
+            let group_idx = group_for_component[component_idx];
+            debug_assert!(touched_group.is_none_or(|seen| seen == group_idx));
+            touched_group = Some(group_idx);
+            components[component_idx].representative
+        });
+        if let Some(group_idx) = touched_group {
+            cells_by_group[group_idx].push(cell_idx);
+            if let Err(failure) = rewritten {
+                if failure == RewriteFailure::CellKilling {
+                    cell_killing_cells.push(cell_idx);
+                }
+                failures[group_idx] = Some(match (failures[group_idx], failure) {
+                    (Some(RewriteFailure::CellKilling), _) | (_, RewriteFailure::CellKilling) => {
+                        RewriteFailure::CellKilling
+                    }
+                    _ => RewriteFailure::NonSimple,
+                });
+            }
+        }
+    }
+
+    Ok(GroupClassification {
+        groups,
+        failures,
+        cells_by_group,
+        cell_killing_cells,
+    })
 }
 
 #[derive(Default)]
@@ -534,6 +609,38 @@ impl BoundedComponents {
     }
 }
 
+fn directed_links_form_single_cycle(edges: &[(u32, u32)]) -> bool {
+    let mut next_for = FxHashMap::<u32, u32>::default();
+    let mut incoming = FxHashSet::<u32>::default();
+    for &(from, to) in edges {
+        if from == to || next_for.insert(from, to).is_some() || !incoming.insert(to) {
+            return false;
+        }
+    }
+    if next_for.len() != incoming.len() || next_for.keys().any(|vertex| !incoming.contains(vertex))
+    {
+        return false;
+    }
+    let Some(&(start, _)) = edges.first() else {
+        return true;
+    };
+    let mut current = start;
+    let mut visited = FxHashSet::default();
+    loop {
+        if !visited.insert(current) {
+            if current != start {
+                return false;
+            }
+            break;
+        }
+        let Some(&next) = next_for.get(&current) else {
+            return false;
+        };
+        current = next;
+    }
+    visited.len() == next_for.len()
+}
+
 fn complete_links_are_single_cycles(
     vertices: &FxHashSet<u32>,
     cell_ids: &[usize],
@@ -553,41 +660,9 @@ fn complete_links_are_single_cycles(
             }
         }
     }
-    for edges in links.values() {
-        let mut next_for = FxHashMap::<u32, u32>::default();
-        let mut incoming = FxHashSet::<u32>::default();
-        for &(from, to) in edges {
-            if from == to || next_for.insert(from, to).is_some() || !incoming.insert(to) {
-                return Ok(false);
-            }
-        }
-        if next_for.len() != incoming.len()
-            || next_for.keys().any(|vertex| !incoming.contains(vertex))
-        {
-            return Ok(false);
-        }
-        let Some(&start) = next_for.keys().next() else {
-            continue;
-        };
-        let mut current = start;
-        let mut visited = FxHashSet::default();
-        loop {
-            if !visited.insert(current) {
-                if current != start {
-                    return Ok(false);
-                }
-                break;
-            }
-            let Some(&next) = next_for.get(&current) else {
-                return Ok(false);
-            };
-            current = next;
-        }
-        if visited.len() != next_for.len() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    Ok(links
+        .values()
+        .all(|edges| directed_links_form_single_cycle(edges)))
 }
 
 /// Apply one deterministic, cell-preserving positive-resolution batch.
@@ -676,45 +751,18 @@ pub(super) fn simplify_positive_edges(
         return Ok(report);
     }
 
-    let groups = interaction_groups(
+    let GroupClassification {
+        groups,
+        failures: group_failure,
+        cells_by_group,
+        cell_killing_cells: _,
+    } = classify_interaction_groups(
         &components,
         &component_for_vertex,
         component_cells,
         cells,
         cell_indices,
     )?;
-    let mut group_for_component = vec![usize::MAX; components.len()];
-    for (group_idx, group) in groups.iter().enumerate() {
-        for &component_idx in group {
-            group_for_component[component_idx] = group_idx;
-        }
-    }
-    let mut group_failure = vec![None; groups.len()];
-    let mut cells_by_group = vec![Vec::<usize>::new(); groups.len()];
-    for &cell_idx in component_cells {
-        let span = cell_span(cell_idx, cells, cell_indices)?;
-        let mut touched_group = None;
-        let rewritten = rewrite_cycle(span, |vertex| {
-            let Some(&component_idx) = component_for_vertex.get(&vertex) else {
-                return vertex;
-            };
-            let group_idx = group_for_component[component_idx];
-            debug_assert!(touched_group.is_none_or(|seen| seen == group_idx));
-            touched_group = Some(group_idx);
-            components[component_idx].representative
-        });
-        if let Some(group_idx) = touched_group {
-            cells_by_group[group_idx].push(cell_idx);
-            if let Err(failure) = rewritten {
-                group_failure[group_idx] = Some(match (group_failure[group_idx], failure) {
-                    (Some(RewriteFailure::CellKilling), _) | (_, RewriteFailure::CellKilling) => {
-                        RewriteFailure::CellKilling
-                    }
-                    _ => RewriteFailure::NonSimple,
-                });
-            }
-        }
-    }
 
     let mut replacements = FxHashMap::default();
     let mut affected_cells = Vec::new();
@@ -865,58 +913,20 @@ pub(super) fn canonicalize_exact_zero_edges(
     let (components, component_for_vertex) = build_components(&zero_edges);
     report.exact_zero_components_detected = components.len();
     let candidate_cells = localized_candidate_cells.unwrap_or_else(|| (0..cells.len()).collect());
-    let groups = interaction_groups(
+    // Groups are interaction-connected through cells and classified together,
+    // so exact and positive policies retain identical failure precedence.
+    let GroupClassification {
+        groups,
+        failures: group_failure,
+        cells_by_group,
+        cell_killing_cells: mut cell_killing_generators,
+    } = classify_interaction_groups(
         &components,
         &component_for_vertex,
         &candidate_cells,
         cells,
         cell_indices,
     )?;
-
-    let mut group_for_component = vec![usize::MAX; components.len()];
-    for (group_idx, group) in groups.iter().enumerate() {
-        for &component_idx in group {
-            group_for_component[component_idx] = group_idx;
-        }
-    }
-
-    // Groups are interaction-connected through cells, so one cell can touch
-    // at most one group. Classify every group in one linear pass rather than
-    // rebuilding and strictly validating the whole diagram per component.
-    let mut group_failure = vec![None; groups.len()];
-    let mut cells_by_group = vec![Vec::<usize>::new(); groups.len()];
-    let mut cell_killing_generators = Vec::new();
-    for &cell_idx in &candidate_cells {
-        let span = cell_span(cell_idx, cells, cell_indices)?;
-        let mut touched_group = None;
-        let rewritten = rewrite_cycle(span, |vertex| {
-            let component_idx = component_for_vertex
-                .get(&vertex)
-                .copied()
-                .unwrap_or(usize::MAX);
-            if component_idx == usize::MAX {
-                return vertex;
-            }
-            let group_idx = group_for_component[component_idx];
-            debug_assert!(touched_group.is_none_or(|seen| seen == group_idx));
-            touched_group = Some(group_idx);
-            components[component_idx].representative
-        });
-        if let Some(group_idx) = touched_group {
-            cells_by_group[group_idx].push(cell_idx);
-        }
-        if let (Some(group_idx), Err(failure)) = (touched_group, rewritten) {
-            if failure == RewriteFailure::CellKilling {
-                cell_killing_generators.push(cell_idx);
-            }
-            group_failure[group_idx] = Some(match (group_failure[group_idx], failure) {
-                (Some(RewriteFailure::CellKilling), _) | (_, RewriteFailure::CellKilling) => {
-                    RewriteFailure::CellKilling
-                }
-                _ => RewriteFailure::NonSimple,
-            });
-        }
-    }
 
     let mut replacements = FxHashMap::default();
     let mut accepted_components = 0usize;
@@ -1082,40 +1092,10 @@ fn elision_links_are_single_cycles(diagram: &crate::SphericalVoronoi) -> bool {
         }
     }
 
-    for edges in link_edges.into_iter().filter(|edges| !edges.is_empty()) {
-        let mut next_for = FxHashMap::<u32, u32>::default();
-        let mut incoming = FxHashSet::<u32>::default();
-        for (from, to) in &edges {
-            if next_for.insert(*from, *to).is_some() || !incoming.insert(*to) {
-                return false;
-            }
-        }
-        if next_for.len() != incoming.len()
-            || next_for.keys().any(|vertex| !incoming.contains(vertex))
-        {
-            return false;
-        }
-
-        let start = edges[0].0;
-        let mut current = start;
-        let mut visited = FxHashSet::default();
-        loop {
-            if !visited.insert(current) {
-                if current != start {
-                    return false;
-                }
-                break;
-            }
-            let Some(&next) = next_for.get(&current) else {
-                return false;
-            };
-            current = next;
-        }
-        if visited.len() != next_for.len() {
-            return false;
-        }
-    }
-    true
+    link_edges
+        .iter()
+        .filter(|edges| !edges.is_empty())
+        .all(|edges| directed_links_form_single_cycle(edges))
 }
 
 /// Removing a face can leave an ordinary boundary vertex incident to only the

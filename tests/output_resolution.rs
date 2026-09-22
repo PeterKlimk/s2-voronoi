@@ -338,8 +338,11 @@ fn explicit_elision_returns_a_dense_valid_cell_mesh() {
             source_sites[resolved.mesh.source_input_index(cell.cell_index)]
         );
     }
+}
 
-    let mut welded_points = points;
+#[test]
+fn explicit_elision_preserves_welded_source_provenance() {
+    let mut welded_points = disabled_weld_cell_killing_points();
     welded_points.push(welded_points[1]);
     let welded = compute_with_report(
         &welded_points,
@@ -355,6 +358,12 @@ fn explicit_elision_returns_a_dense_valid_cell_mesh() {
     assert_eq!(welded.mesh.cell_for_input(10), None);
     assert_eq!(welded.mesh.cell_for_input(18), None);
     assert!(welded.mesh.validate().is_strictly_valid());
+}
+
+#[test]
+fn world_input_elision_uses_the_same_unit_quotient() {
+    let mut welded_points = disabled_weld_cell_killing_points();
+    welded_points.push(welded_points[1]);
 
     let embedding = SphereEmbedding::new([2.0, -3.0, 5.0], 7.0).unwrap();
     let world_points: Vec<[f64; 3]> = welded_points
