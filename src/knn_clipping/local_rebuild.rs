@@ -218,27 +218,18 @@ fn local_hull_fans(
 /// consistent oracle `fans_for`, and grow on the residual until it closes (or
 /// `max_rounds`). The caller's whole-diagram never-worse gate makes any
 /// non-converged residual safe: an unrebuilt diagram is simply not committed.
-#[derive(Clone, Copy)]
-struct GrowthDiagnostics {
-    enabled: bool,
-    name: &'static str,
-}
-
 fn run_rebuild_growth(
     points: &[Vec3],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     merge_affected: &[u32],
     max_rounds: usize,
-    diagnostics: GrowthDiagnostics,
+    debug: bool,
     mut fans_for: impl FnMut(&WorkingDiagram, &[u32]) -> FxHashMap<u32, RebuildFan>,
 ) -> LocalRebuildStats {
     use std::collections::BTreeSet;
     let mut stats = LocalRebuildStats::default();
-    let GrowthDiagnostics {
-        enabled: debug,
-        name: debug_name,
-    } = diagnostics;
+    let debug_name = "rebuild_with_local_hull";
 
     let defect_gens: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
     let mut closure: BTreeSet<u32> = defect_gens.clone();
@@ -352,10 +343,7 @@ pub(crate) fn rebuild_with_local_hull(
         defect_pairs,
         merge_affected,
         max_rounds,
-        GrowthDiagnostics {
-            enabled: debug,
-            name: "rebuild_with_local_hull",
-        },
+        debug,
         |work, closure| local_hull_fans(points, grid, scratch, work, closure, ring_k),
     )
 }
@@ -998,17 +986,18 @@ impl<'a> WorkingDiagram<'a> {
         grow
     }
 
-    /// Materialize the overlay into flat cell arrays. Returns
-    /// `(minted_vertex_positions, cells, cell_indices)`: minted vids were
-    /// assigned past the base vertex count, so the caller appends the minted
-    /// positions to its base vertex array and swaps in the cell arrays on
-    /// acceptance (truncating the appended positions again on rejection).
+    /// Generators whose cells the overlay replaces, in ascending order.
     pub(crate) fn overridden_cells(&self) -> Vec<u32> {
         let mut cells: Vec<u32> = self.overrides.keys().copied().collect();
         cells.sort_unstable();
         cells
     }
 
+    /// Materialize the overlay into flat cell arrays. Returns
+    /// `(minted_vertex_positions, cells, cell_indices)`: minted vids were
+    /// assigned past the base vertex count, so the caller appends the minted
+    /// positions to its base vertex array and swaps in the cell arrays on
+    /// acceptance (truncating the appended positions again on rejection).
     pub(crate) fn into_flat(self) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
         let n = self.base_layout.cell_count();
         let mut cells = Vec::with_capacity(n);
