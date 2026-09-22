@@ -1224,3 +1224,61 @@ fn threshold_adjacent_real_cutters_are_unchanged() {
         "candidate corpus was unexpectedly small"
     );
 }
+
+#[test]
+fn extraction_ignores_padding_but_rejects_each_invalid_live_lane() {
+    let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+    for (i, direction) in [
+        Vec3::new(0.25, 0.0, 1.0),
+        Vec3::new(-0.125, 0.2165, 1.0),
+        Vec3::new(-0.125, -0.2165, 1.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        builder
+            .clip_with_slot_result(i + 1, i as u32 + 1, direction.normalize())
+            .unwrap();
+    }
+    let mut expected = CellOutputBuffer::default();
+    builder.to_vertex_data_full(&mut expected).unwrap();
+    assert_eq!(expected.vertices.len(), 3);
+    {
+        let inner = builder.as_gnomonic_mut();
+        let poly = if inner.use_a {
+            &mut inner.poly_a
+        } else {
+            &mut inner.poly_b
+        };
+        poly.us[3..].fill(f64::NAN);
+        poly.vs[3..].fill(f64::INFINITY);
+    }
+    let mut actual = CellOutputBuffer::default();
+    builder.to_vertex_data_full(&mut actual).unwrap();
+    assert_eq!(actual.vertices, expected.vertices);
+    assert_eq!(actual.edge_neighbor_slots, expected.edge_neighbor_slots);
+    for i in 0..3 {
+        let old = {
+            let inner = builder.as_gnomonic_mut();
+            let poly = if inner.use_a {
+                &mut inner.poly_a
+            } else {
+                &mut inner.poly_b
+            };
+            std::mem::replace(&mut poly.us[i], f64::NAN)
+        };
+        assert_eq!(
+            builder.to_vertex_data_full(&mut actual),
+            Err(CellFailure::NoValidSeed)
+        );
+        assert!(actual.vertices.is_empty());
+        assert!(actual.edge_neighbor_slots.is_empty());
+        let inner = builder.as_gnomonic_mut();
+        let poly = if inner.use_a {
+            &mut inner.poly_a
+        } else {
+            &mut inner.poly_b
+        };
+        poly.us[i] = old;
+    }
+}

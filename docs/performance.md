@@ -49,6 +49,14 @@ counts, not equivalent elapsed-time claims. Portable follow-up reductions are
 [experiment record](internal/september-2026-optimization.md#construction-follow-up-fibonacci-and-uniform-priority)
 for baselines, counter methodology, secondary distributions, and validation.
 
+A subsequent AVX2 extraction change batches four corners' exact projection,
+normalization, validity checks, and f32 conversion. It removes another 0.54%/0.52%
+of 1M Fibonacci/uniform instructions; 16-worker and 4M controls also improve.
+Generic and `simd_scalar` builds retain scalar extraction. Secondary 100k clustered
+and mega instructions rise 0.17% and 0.03%. The
+[extraction follow-up](internal/september-2026-optimization.md#extraction-follow-up-exact-simd-and-deferred-coordinates)
+records these tradeoffs, bitwise checks, and two rejected deferred-coordinate designs.
+
 ## Point-location queries
 
 Point location reduces each complete shell layer to its nearest key without sorting

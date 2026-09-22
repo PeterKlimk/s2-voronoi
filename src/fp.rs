@@ -1,6 +1,6 @@
 //! Floating-point helpers and the 8-lane SIMD backend seam.
 //!
-//! All explicit SIMD in the crate goes through [`PointChunk8`] / [`Dots8`],
+//! All explicit SIMD in the crate goes through the helpers in this module,
 //! so the backend is swappable for benchmarking and portability:
 //!
 //! - default: the `wide` crate (explicit SIMD on stable Rust)
@@ -486,5 +486,146 @@ mod backend {
             mask |= u32::from(d >= neg_eps) << i;
         }
         (dists, mask)
+    }
+}
+/// Four independent gnomonic projections, normalized in f64 and rounded once.
+///
+/// Arithmetic order matches the scalar extractor. The mask marks squared lengths
+/// in `min_len2..=f32::MAX`; callers must mask off unused lanes. Norms are returned
+/// for the checked scalar oracle and optimized away in production callers.
+#[cfg(any(test, all(target_feature = "avx2", not(feature = "simd_scalar"))))]
+#[inline]
+pub(crate) fn project_normalize4(
+    g: [f64; 3],
+    t1: [f64; 3],
+    t2: [f64; 3],
+    us: [f64; 4],
+    vs: [f64; 4],
+    min_len2: f64,
+) -> ([[f32; 4]; 3], [f64; 4], u32) {
+    #[cfg(not(feature = "simd_scalar"))]
+    {
+        use wide::{f64x4, CmpGe, CmpLe};
+        let u = f64x4::from(us);
+        let v = f64x4::from(vs);
+        let x = u * f64x4::splat(t1[0]) + (v * f64x4::splat(t2[0]) + f64x4::splat(g[0]));
+        let y = u * f64x4::splat(t1[1]) + (v * f64x4::splat(t2[1]) + f64x4::splat(g[1]));
+        let z = u * f64x4::splat(t1[2]) + (v * f64x4::splat(t2[2]) + f64x4::splat(g[2]));
+        let len2 = (x * x + y * y) + z * z;
+        let inv = f64x4::splat(1.0) / len2.sqrt();
+        let valid = (len2.cmp_ge(f64x4::splat(min_len2))
+            & len2.cmp_le(f64x4::splat(f32::MAX as f64)))
+        .move_mask() as u32;
+        (
+            [
+                (x * inv).to_array().map(|v| v as f32),
+                (y * inv).to_array().map(|v| v as f32),
+                (z * inv).to_array().map(|v| v as f32),
+            ],
+            len2.to_array(),
+            valid,
+        )
+    }
+    #[cfg(feature = "simd_scalar")]
+    {
+        let mut xyz = [[0.0; 4]; 3];
+        let mut norms = [0.0; 4];
+        for i in 0..4 {
+            let x = us[i] * t1[0] + (vs[i] * t2[0] + g[0]);
+            let y = us[i] * t1[1] + (vs[i] * t2[1] + g[1]);
+            let z = us[i] * t1[2] + (vs[i] * t2[2] + g[2]);
+            let len2 = (x * x + y * y) + z * z;
+            let inv = len2.sqrt().recip();
+            xyz[0][i] = (x * inv) as f32;
+            xyz[1][i] = (y * inv) as f32;
+            xyz[2][i] = (z * inv) as f32;
+            norms[i] = len2;
+        }
+        let valid = norms.iter().enumerate().fold(0, |mask, (i, n)| {
+            mask | (u32::from((min_len2..=f32::MAX as f64).contains(n)) << i)
+        });
+        (xyz, norms, valid)
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::project_normalize4;
+
+    #[test]
+    fn batched_projection_matches_scalar_bits_and_validity() {
+        let min_len2 = crate::tolerances::EXTRACT_DEGENERATE_LEN2 as f64;
+        let mut state = 0xdcc21f592834701bu64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state as i64 as f64) / (i64::MAX as f64)
+        };
+        for _ in 0..1024 {
+            let g = std::array::from_fn(|_| next());
+            let t1 = std::array::from_fn(|_| next());
+            let t2 = std::array::from_fn(|_| next());
+            let us = std::array::from_fn(|_| next() * 100.0);
+            let vs = std::array::from_fn(|_| next() * 100.0);
+            let (xyz, norms, mask) = project_normalize4(g, t1, t2, us, vs, min_len2);
+            for i in 0..4 {
+                let source = glam::DVec3::from_array(std::array::from_fn(|axis| {
+                    super::mul_add_unfused_f64(
+                        us[i],
+                        t1[axis],
+                        super::mul_add_unfused_f64(vs[i], t2[axis], g[axis]),
+                    )
+                }));
+                let norm = source.length_squared();
+                assert_eq!(norms[i].to_bits(), norm.to_bits());
+                let valid = (min_len2..=f32::MAX as f64).contains(&norm);
+                assert_eq!(mask & (1 << i) != 0, valid);
+                if valid {
+                    let expected =
+                        crate::types::canonical_vec3_from_dvec3_with_len_squared(source, norm);
+                    assert_eq!(
+                        [xyz[0][i], xyz[1][i], xyz[2][i]].map(f32::to_bits),
+                        expected.to_array().map(f32::to_bits)
+                    );
+                }
+            }
+        }
+        for us in [
+            [0.0, -0.0, f64::INFINITY, f64::NAN],
+            [1.0, 1e-15, 1e20, f64::MAX],
+            [
+                min_len2.sqrt().next_down(),
+                min_len2.sqrt(),
+                min_len2.sqrt().next_up(),
+                1.0,
+            ],
+        ] {
+            let (xyz, norms, mask) = project_normalize4(
+                [0.0; 3],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                us,
+                [0.0; 4],
+                min_len2,
+            );
+            for i in 0..4 {
+                let source = glam::DVec3::new(us[i] + 0.0, us[i] * 0.0, us[i] * 0.0);
+                let norm = source.length_squared();
+                assert_eq!(
+                    mask & (1 << i) != 0,
+                    (min_len2..=f32::MAX as f64).contains(&norm)
+                );
+                if mask & (1 << i) != 0 {
+                    assert_eq!(norms[i].to_bits(), norm.to_bits());
+                    let expected =
+                        crate::types::canonical_vec3_from_dvec3_with_len_squared(source, norm);
+                    assert_eq!(
+                        [xyz[0][i], xyz[1][i], xyz[2][i]].map(f32::to_bits),
+                        expected.to_array().map(f32::to_bits)
+                    );
+                }
+            }
+        }
     }
 }

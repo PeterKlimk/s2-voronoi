@@ -260,3 +260,99 @@ Follow-up validation:
 - Clippy with `tools,microbench,serde,glam`, formatting, and diff whitespace checks
   passed. The locator implementation is committed as `b5a1f18` and the construction
   changes as `ccf82f3`; pre-existing working-tree edits remain separate.
+
+## Extraction follow-up: exact SIMD and deferred coordinates
+
+Baseline: `44b265b` plus the same pre-existing working-tree edits. Frozen source,
+prototype generators, binaries, counter CSVs, and validation logs are in
+`/tmp/voronoi-opt-round3`. Measurements use the earlier grouped perf events,
+alternating process order, seed 12345, and no preprocessing. Fibonacci and uniform
+remain the primary targets; cycles are recorded but do not decide these small wins.
+
+### Retained: exact four-corner projection and normalization
+
+On AVX2 builds using the `wide` backend, gnomonic extraction evaluates four corners
+at a time through `fp::project_normalize4`. Each lane preserves the scalar nested,
+unfused projection arithmetic, left-associated squared norm, exact f64 square root
+and reciprocal, and final f32 rounding. Length validity and f32 conversion are
+batched too. Invalid padding lanes are masked out; invalid live lanes still fail
+with no partially published output. Metadata emission stays shared with the scalar
+loop through a local macro. Checked builds compare every live lane's squared norm
+and coordinate bits with the scalar extractor.
+
+The generic and `simd_scalar` production paths retain scalar extraction. An ungated
+portable prototype increased instructions by 0.769% on Fibonacci and 0.822% on
+uniform. With the target guard, portable counters are unchanged to within one part
+per million (`final-generic.csv`). The helper's scalar comparison backend is also
+covered by tests.
+
+Native candidate progression, 1M points, one worker, two builds/process,
+three alternating pairs per candidate:
+
+| Candidate | Fibonacci instructions | Uniform instructions |
+|---|---:|---:|
+| Four corners, scalar validity/conversion | -0.301% | -0.286% |
+| Batched validity | -0.414% | -0.401% |
+| Batched validity and conversion | -0.536% | -0.520% |
+| Eight corners, batched validity and conversion | -0.444% | -0.329% |
+
+Eight-corner batches reduce branches further but perform more excess arithmetic
+on short polygons; retain four. Raw files: `simd.csv`, `mask.csv`, `round.csv`,
+`eight.csv`, and `round-generic.csv` for the ungated portable experiment.
+
+Final native controls use the default bin policy. One-worker runs pin CPU 2;
+16-worker runs pin physical CPUs 0–15.
+
+| Workload | Workers | Pairs | Fibonacci instructions / branches | Uniform instructions / branches |
+|---|---:|---:|---:|---:|
+| 1M, two builds/process | 1 | 5 | -0.536% / -1.656% | -0.520% / -1.533% |
+| 1M, three builds/process | 16 | 3 | -0.549% / -1.620% | -0.531% / -1.486% |
+| 4M, two builds/process | 16 | 3 | -0.519% / -1.626% | -0.494% / -1.494% |
+
+Every pair reduced both counters on the primary workloads. Secondary 100k,
+one-worker controls expose small instruction tradeoffs: clustered +0.169% and
+mega +0.027%, with branches down 0.199% and 0.151%; cubed improves instructions
+0.439% and branches 1.235%. These tradeoffs are retained under the stated ordinary-
+workload priority. Raw files: `final-native.csv`, `final-16threads.csv`,
+`final-4m.csv`, and `final-secondary.csv`.
+
+### Rejected: defer y/z materialization until corner resolution
+
+An already-resolved corner still needs its local normalized x coordinate for the
+representative-drift certificate and edge hints. Computing that x exactly requires
+all three unnormalized components for the squared norm, plus the existing square
+root and reciprocal. The removable work is only final y/z scaling, conversion,
+and storage, not two-thirds of all normalization work.
+
+Two native success-workload prototypes were gated at 1M, one worker, two
+builds/process, three alternating pairs:
+
+| Candidate | Fibonacci instructions / branches | Uniform instructions / branches |
+|---|---:|---:|
+| Store unnormalized y/z and reciprocal; finish only unresolved corners in emission | +1.475% / +3.333% | +1.337% / +2.937% |
+| Extract attribution first, resolve topology, then read the retained polygon for coordinates | +2.632% / +2.508% | +2.419% / +2.196% |
+
+The first version pays for an extra intermediate stream and conditional emission.
+The second avoids that stream but adds another traversal and per-corner dispatch.
+Both lost every instruction/branch pair, so neither was promoted for a full
+correctness/failure-handling audit. In particular, the topology-first prototype
+would also need to preserve extraction-failure recovery before it could be
+retained. Raw files: `lazy.csv` and `topology.csv`; source remains in the artifact
+directory. Do not confuse this work removal attempt with the earlier rejected
+key/position buffer split, which only changed loads and layout.
+
+### Validation of the retained SIMD change
+
+- Full portable release suite: 416 passed, zero failed, 23 existing ignored tests.
+- Native checked library/API/correctness/adversarial/high-degree/edge-reconciliation/
+  small-N suites: 360 passed, zero failed.
+- Native tools-enabled release library/API/correctness/fingerprint suites:
+  324 passed. Scalar/no-default-feature library/correctness/locator: 295 passed.
+- The 100k native fingerprints match the original baseline at one and six workers,
+  with six bins: representation `0991e1df6f60d5de`, semantic `961e56d915d09a4e`.
+- New helper tests compare 4,096 deterministic lanes against scalar coordinate
+  bits and squared norms, plus validity boundary, zero, infinity, and NaN cases.
+  A polygon test poisons unused padding and each live lane separately, checking
+  ignored padding, error classification, and empty output on failure.
+- Clippy with `tools,microbench,serde,glam`, formatting, and diff whitespace checks
+  passed. The scalar normalization implementation remains the checked oracle.

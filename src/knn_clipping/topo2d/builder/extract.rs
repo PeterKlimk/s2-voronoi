@@ -79,75 +79,84 @@ impl GnomonicBuilder {
             return Err(CellFailure::NoValidSeed);
         };
         let mut previous_neighbor = last.neighbor_idx;
+        // Share metadata writes between the scalar loop and native batches.
+        macro_rules! emit_vertex {
+            ($i:ident, $v_pos:ident) => {{
+                let Some(constraint) = self.constraints.get(poly.edge_planes[$i] as usize) else {
+                    return Err(CellFailure::NoValidSeed);
+                };
+                let neighbor = constraint.neighbor_idx;
+                // Native emission resolves most corners from incoming edge
+                // checks before it needs a canonical ownership key.
+                #[cfg(target_feature = "avx2")]
+                let key = [gen_idx, previous_neighbor, neighbor];
+                #[cfg(not(target_feature = "avx2"))]
+                let key = sort3_u32(gen_idx, previous_neighbor, neighbor);
+                previous_neighbor = neighbor;
+                // SAFETY: all three vectors were cleared and reserved for
+                // `poly.len` immediately above; `i` is in `0..poly.len`.
+                unsafe {
+                    vertices.get_unchecked_mut($i).write((key, $v_pos));
+                    #[cfg(target_feature = "avx2")]
+                    vertex_indices.get_unchecked_mut($i).write(u32::MAX);
+                }
+
+                // This outgoing edge supplies both the current corner's second
+                // generator and the directed edge-check slot.
+                unsafe {
+                    #[cfg(any(test, debug_assertions))]
+                    edge_neighbor_globals.get_unchecked_mut($i).write(neighbor);
+                    edge_neighbor_slots
+                        .get_unchecked_mut($i)
+                        .write(constraint.neighbor_slot);
+                }
+            }};
+        }
+
+        #[cfg(all(target_feature = "avx2", not(feature = "simd_scalar")))]
+        for start in (0..poly.len).step_by(4) {
+            // The fixed polygon capacity is a multiple of four. Padding lanes
+            // may contain stale coordinates; only the live lanes are certified.
+            const {
+                assert!(crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES % 4 == 0);
+            }
+            let (xyz, _norms, valid) = fp::project_normalize4(
+                self.basis.g.to_array(),
+                self.basis.t1.to_array(),
+                self.basis.t2.to_array(),
+                poly.us[start..start + 4].try_into().unwrap(),
+                poly.vs[start..start + 4].try_into().unwrap(),
+                EXTRACT_DEGENERATE_LEN2 as f64,
+            );
+            let lanes = (poly.len - start).min(4);
+            let mask = (1u32 << lanes) - 1;
+            if valid & mask != mask {
+                return Err(CellFailure::NoValidSeed);
+            }
+            for lane in 0..lanes {
+                let i = start + lane;
+                #[cfg(any(test, debug_assertions))]
+                poly.vertex_planes(i);
+                let v_pos = Vec3::new(xyz[0][lane], xyz[1][lane], xyz[2][lane]);
+                #[cfg(debug_assertions)]
+                {
+                    let (expected, norm) = self.scalar_vertex_position(i)?;
+                    assert_eq!(
+                        v_pos.to_array().map(f32::to_bits),
+                        expected.to_array().map(f32::to_bits)
+                    );
+                    assert_eq!(_norms[lane].to_bits(), norm.to_bits());
+                }
+                emit_vertex!(i, v_pos);
+            }
+        }
+
+        #[cfg(not(all(target_feature = "avx2", not(feature = "simd_scalar"))))]
         for i in 0..poly.len {
-            let u = poly.us[i];
-            let v = poly.vs[i];
             #[cfg(any(test, debug_assertions))]
             poly.vertex_planes(i);
-
-            let source = DVec3::new(
-                fp::mul_add_unfused_f64(
-                    u,
-                    self.basis.t1.x,
-                    fp::mul_add_unfused_f64(v, self.basis.t2.x, self.basis.g.x),
-                ),
-                fp::mul_add_unfused_f64(
-                    u,
-                    self.basis.t1.y,
-                    fp::mul_add_unfused_f64(v, self.basis.t2.y, self.basis.g.y),
-                ),
-                fp::mul_add_unfused_f64(
-                    u,
-                    self.basis.t1.z,
-                    fp::mul_add_unfused_f64(v, self.basis.t2.z, self.basis.g.z),
-                ),
-            );
-            let len2 = source.length_squared();
-            // The projection-limit gate keeps every reachable chart source
-            // many orders of magnitude inside f32 range, while tangency keeps
-            // it nonzero. Check the same envelope from the f64 norm that
-            // normalization must consume, avoiding a second f32 norm.
-            let valid_len2 = (EXTRACT_DEGENERATE_LEN2 as f64..=f32::MAX as f64).contains(&len2);
-            #[cfg(debug_assertions)]
-            {
-                let dir = Vec3::new(source.x as f32, source.y as f32, source.z as f32);
-                let old_len2 = dir.length_squared();
-                let old_valid = (EXTRACT_DEGENERATE_LEN2..=f32::MAX).contains(&old_len2);
-                debug_assert_eq!(valid_len2, old_valid);
-            }
-            if !valid_len2 {
-                return Err(CellFailure::NoValidSeed);
-            }
-            let v_pos = crate::types::canonical_vec3_from_dvec3_with_len_squared(source, len2);
-
-            let Some(constraint) = self.constraints.get(poly.edge_planes[i] as usize) else {
-                return Err(CellFailure::NoValidSeed);
-            };
-            let neighbor = constraint.neighbor_idx;
-            // Native emission resolves most corners from incoming edge
-            // checks before it needs a canonical ownership key.
-            #[cfg(target_feature = "avx2")]
-            let key = [gen_idx, previous_neighbor, neighbor];
-            #[cfg(not(target_feature = "avx2"))]
-            let key = sort3_u32(gen_idx, previous_neighbor, neighbor);
-            previous_neighbor = neighbor;
-            // SAFETY: all three vectors were cleared and reserved for
-            // `poly.len` immediately above; `i` is in `0..poly.len`.
-            unsafe {
-                vertices.get_unchecked_mut(i).write((key, v_pos));
-                #[cfg(target_feature = "avx2")]
-                vertex_indices.get_unchecked_mut(i).write(u32::MAX);
-            }
-
-            // This outgoing edge supplies both the current corner's second
-            // generator and the directed edge-check slot.
-            unsafe {
-                #[cfg(any(test, debug_assertions))]
-                edge_neighbor_globals.get_unchecked_mut(i).write(neighbor);
-                edge_neighbor_slots
-                    .get_unchecked_mut(i)
-                    .write(constraint.neighbor_slot);
-            }
+            let (v_pos, _) = self.scalar_vertex_position(i)?;
+            emit_vertex!(i, v_pos);
         }
         // Every spare-capacity slot above is initialized on success. On any
         // earlier error the public lengths remain zero, so partial output is
@@ -172,6 +181,52 @@ impl GnomonicBuilder {
         buffer.edge_keys_verified = true;
 
         Ok(())
+    }
+
+    #[cfg(any(
+        debug_assertions,
+        not(all(target_feature = "avx2", not(feature = "simd_scalar")))
+    ))]
+    #[inline(always)]
+    fn scalar_vertex_position(&self, i: usize) -> Result<(Vec3, f64), CellFailure> {
+        let poly = self.current_poly();
+        let u = poly.us[i];
+        let v = poly.vs[i];
+        let source = DVec3::new(
+            fp::mul_add_unfused_f64(
+                u,
+                self.basis.t1.x,
+                fp::mul_add_unfused_f64(v, self.basis.t2.x, self.basis.g.x),
+            ),
+            fp::mul_add_unfused_f64(
+                u,
+                self.basis.t1.y,
+                fp::mul_add_unfused_f64(v, self.basis.t2.y, self.basis.g.y),
+            ),
+            fp::mul_add_unfused_f64(
+                u,
+                self.basis.t1.z,
+                fp::mul_add_unfused_f64(v, self.basis.t2.z, self.basis.g.z),
+            ),
+        );
+        let len2 = source.length_squared();
+        // The projection-limit gate keeps every reachable chart source
+        // many orders of magnitude inside f32 range, while tangency keeps
+        // it nonzero. Check the same envelope from the f64 norm that
+        // normalization must consume, avoiding a second f32 norm.
+        let valid_len2 = (EXTRACT_DEGENERATE_LEN2 as f64..=f32::MAX as f64).contains(&len2);
+        #[cfg(debug_assertions)]
+        {
+            let dir = Vec3::new(source.x as f32, source.y as f32, source.z as f32);
+            let old_len2 = dir.length_squared();
+            let old_valid = (EXTRACT_DEGENERATE_LEN2..=f32::MAX).contains(&old_len2);
+            debug_assert_eq!(valid_len2, old_valid);
+        }
+        if !valid_len2 {
+            return Err(CellFailure::NoValidSeed);
+        }
+        let v_pos = crate::types::canonical_vec3_from_dvec3_with_len_squared(source, len2);
+        Ok((v_pos, len2))
     }
 
     pub(super) fn count_active_planes(&self) -> (usize, usize) {
