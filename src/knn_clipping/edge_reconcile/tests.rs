@@ -457,33 +457,29 @@ fn localized_dupscan_matches_global_with_chain() {
     let cell_indices = vec![0u32, 1, 2, 3, 4];
     let records = [edge_record(0, 1)];
 
-    let mut uf_local = SparseUnionFind::new();
-    let mut merged_local = 0usize;
+    let mut local = MergeProposals::new();
     localized_dup_key_unions(
         &records,
         LiveCellLayout::new(&cells, &cell_indices),
         VertexKeys::Flat(&vertex_keys),
-        &mut uf_local,
-        &mut merged_local,
+        &mut local,
     )
     .expect("localized dup scan");
 
-    let mut uf_global = SparseUnionFind::new();
-    let mut merged_global = 0usize;
-    global_dup_key_unions(
-        VertexKeys::Flat(&vertex_keys),
-        &mut uf_global,
-        &mut merged_global,
-    );
+    let mut global = MergeProposals::new();
+    global_dup_key_unions(VertexKeys::Flat(&vertex_keys), &mut global);
 
     assert_eq!(
-        partition(&mut uf_local, 5),
-        partition(&mut uf_global, 5),
+        partition(&mut local.components, 5),
+        partition(&mut global.components, 5),
         "localized BFS dup-scan must match the global scan's components (chain case)"
     );
-    assert_eq!(merged_local, merged_global, "same number of merges");
+    assert_eq!(
+        local.accepted_unions, global.accepted_unions,
+        "same number of merges"
+    );
     // Sanity: the two corners are distinct components, each fully merged.
-    let p = partition(&mut uf_local, 5);
+    let p = partition(&mut local.components, 5);
     assert_eq!(p[0], p[1], "corner [0,1,2] copies unioned");
     assert_eq!(p[1], p[2], "corner [0,1,2] third copy unioned via 1-ring");
     assert_eq!(p[3], p[4], "chained corner [2,3,4] copies unioned");

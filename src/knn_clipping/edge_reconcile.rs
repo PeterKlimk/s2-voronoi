@@ -1093,6 +1093,30 @@ fn cell_pair_for_unpaired(va: u32, vb: u32, owner: u32, vertex_keys: VertexKeys<
     }
 }
 
+struct MergeProposals {
+    components: SparseUnionFind,
+    accepted_unions: usize,
+}
+
+impl MergeProposals {
+    fn new() -> Self {
+        Self {
+            components: SparseUnionFind::new(),
+            accepted_unions: 0,
+        }
+    }
+
+    fn union(&mut self, a: u32, b: u32) -> bool {
+        let changed = self.components.union(a, b);
+        self.accepted_unions += usize::from(changed);
+        changed
+    }
+
+    fn into_parts(self) -> (SparseUnionFind, usize) {
+        (self.components, self.accepted_unions)
+    }
+}
+
 /// Walk the unresolved edge records and collect vertex-identity merges into
 /// a union-find. Both apply backends consume the exact same merge set.
 /// Union every pair of segment-endpoint vertices, across and within the
@@ -1103,8 +1127,7 @@ fn proximity_union_segments(
     seg_b: &[(u32, u32)],
     vertices: &[Vec3],
     degenerate_len_eps_sq: f32,
-    uf: &mut SparseUnionFind,
-    merged: &mut usize,
+    proposals: &mut MergeProposals,
 ) -> Result<(), crate::VoronoiError> {
     let mut ids: Vec<u32> = Vec::with_capacity((seg_a.len() + seg_b.len()) * 2);
     for &(v0, v1) in seg_a.iter().chain(seg_b.iter()) {
@@ -1116,8 +1139,8 @@ fn proximity_union_segments(
     for i in 0..ids.len() {
         for j in (i + 1)..ids.len() {
             let d = dist_sq(vertex_pos(vertices, ids[i])?, vertex_pos(vertices, ids[j])?);
-            if d <= degenerate_len_eps_sq && uf.union(ids[i], ids[j]) {
-                *merged += 1;
+            if d <= degenerate_len_eps_sq {
+                proposals.union(ids[i], ids[j]);
             }
         }
     }
@@ -1126,11 +1149,7 @@ fn proximity_union_segments(
 
 /// Union all same-key vertex duplicates by a single O(V) pass over every key.
 /// First-seen (lowest id, since iteration is sequential) is the representative.
-fn global_dup_key_unions(
-    vertex_keys: VertexKeys<'_>,
-    uf: &mut SparseUnionFind,
-    merged: &mut usize,
-) {
+fn global_dup_key_unions(vertex_keys: VertexKeys<'_>, proposals: &mut MergeProposals) {
     let mut first_by_key: rustc_hash::FxHashMap<VertexKey, u32> =
         rustc_hash::FxHashMap::with_capacity_and_hasher(vertex_keys.len(), Default::default());
     vertex_keys.for_each(|i, key| match first_by_key.entry(key) {
@@ -1138,9 +1157,7 @@ fn global_dup_key_unions(
             e.insert(i);
         }
         std::collections::hash_map::Entry::Occupied(e) => {
-            if uf.union(*e.get(), i) {
-                *merged += 1;
-            }
+            proposals.union(*e.get(), i);
         }
     });
 }
@@ -1172,8 +1189,7 @@ fn localized_dup_key_unions(
     edge_records: &[EdgeRecord],
     layout: LiveCellLayout<'_, '_>,
     vertex_keys: VertexKeys<'_>,
-    uf: &mut SparseUnionFind,
-    merged: &mut usize,
+    proposals: &mut MergeProposals,
 ) -> Result<(), crate::VoronoiError> {
     use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -1200,9 +1216,7 @@ fn localized_dup_key_unions(
                     // `other == v` is the same corner vertex seen again from
                     // another of its owner cells — not a duplicate, no union.
                     if other != v {
-                        if uf.union(other, v) {
-                            *merged += 1;
-                        }
+                        proposals.union(other, v);
                         damaged = true;
                     }
                 }
@@ -1251,6 +1265,105 @@ fn assert_localized_dupscan_complete(vertex_keys: VertexKeys<'_>, uf: &mut Spars
 }
 
 #[allow(clippy::too_many_arguments)]
+fn reconcile_irregular_segments(
+    cell_a: u32,
+    cell_b: u32,
+    seg_a: &[(u32, u32)],
+    seg_b: &[(u32, u32)],
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    degenerate_len_eps_sq: f32,
+    proposals: &mut MergeProposals,
+) -> Result<(), crate::VoronoiError> {
+    // Irregular topology (sliver chains, overlapping defects): collapse
+    // endpoint pairs that coincide at the reconciliation scale.
+    proximity_union_segments(seg_a, seg_b, vertices, degenerate_len_eps_sq, proposals)?;
+
+    // A one-sided epsilon edge can survive on one cell after its neighbor
+    // collapsed it. Collapse the emitting edge and, when present, attach it to
+    // the closest coincident vertex in the neighbor cell.
+    let (other_cell, (v0, v1)) = match (seg_a, seg_b) {
+        ([segment], []) => (cell_b, *segment),
+        ([], [segment]) => (cell_a, *segment),
+        _ => return Ok(()),
+    };
+    if dist_sq(vertex_pos(vertices, v0)?, vertex_pos(vertices, v1)?) > degenerate_len_eps_sq {
+        return Ok(());
+    }
+    proposals.union(v0, v1);
+
+    if other_cell as usize >= cells.len() {
+        return Ok(());
+    }
+    let neighbor = cell_vertex_slice(other_cell, cells, cell_indices)?;
+    for vi in [v0, v1] {
+        let vi_pos = vertex_pos(vertices, vi)?;
+        let mut best: Option<(u32, f32)> = None;
+        for &vj in neighbor {
+            let distance = dist_sq(vi_pos, vertex_pos(vertices, vj)?);
+            if best.is_none_or(|(_, best_distance)| distance < best_distance) {
+                best = Some((vj, distance));
+            }
+        }
+        if let Some((vj, distance)) = best {
+            if distance <= degenerate_len_eps_sq {
+                proposals.union(vi, vj);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_segment_pair(
+    seg_a: (u32, u32),
+    seg_b: (u32, u32),
+    vertices: &[Vec3],
+    degenerate_len_eps_sq: f32,
+    proposals: &mut MergeProposals,
+) -> Result<(), crate::VoronoiError> {
+    let (a0, a1) = seg_a;
+    let (b0, b1) = seg_b;
+    let share_a0 = a0 == b0 || a0 == b1;
+    let share_a1 = a1 == b0 || a1 == b1;
+    if share_a0 && share_a1 {
+        return Ok(());
+    }
+    if share_a0 || share_a1 {
+        let (keep_a, keep_b) = if a0 == b0 {
+            (a1, b1)
+        } else if a0 == b1 {
+            (a1, b0)
+        } else if a1 == b0 {
+            (a0, b1)
+        } else {
+            (a0, b0)
+        };
+        if dist_sq(vertex_pos(vertices, keep_a)?, vertex_pos(vertices, keep_b)?)
+            <= degenerate_len_eps_sq
+        {
+            proposals.union(keep_a, keep_b);
+        }
+        return Ok(());
+    }
+
+    let d00a = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b0)?);
+    let d00b = dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b1)?);
+    let d01a = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b1)?);
+    let d01b = dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b0)?);
+    if d00a + d00b <= d01a + d01b {
+        if d00a <= degenerate_len_eps_sq && d00b <= degenerate_len_eps_sq {
+            proposals.union(a0, b0);
+            proposals.union(a1, b1);
+        }
+    } else if d01a <= degenerate_len_eps_sq && d01b <= degenerate_len_eps_sq {
+        proposals.union(a0, b1);
+        proposals.union(a1, b0);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn collect_merges(
     edge_records: &[EdgeRecord],
     vertices: &[Vec3],
@@ -1265,8 +1378,7 @@ fn collect_merges(
     // Sparse: only the handful of vertices named by defective edges ever
     // enter the structure, so clean and near-clean runs skip an O(V) init.
     // Union-by-rank tie-breaking keeps representative selection deterministic.
-    let mut uf = SparseUnionFind::new();
-    let mut merged = 0usize;
+    let mut proposals = MergeProposals::new();
     let degenerate_len_eps_sq: f32 = degenerate_len_eps * degenerate_len_eps;
     let layout = LiveCellLayout::new(cells, cell_indices);
 
@@ -1281,14 +1393,14 @@ fn collect_merges(
     // on defect runs, so clean runs never pay the O(V) scan.
     if scan_dup_keys {
         if options.force_global_dupscan {
-            global_dup_key_unions(vertex_keys, &mut uf, &mut merged);
+            global_dup_key_unions(vertex_keys, &mut proposals);
         } else {
-            localized_dup_key_unions(edge_records, layout, vertex_keys, &mut uf, &mut merged)?;
+            localized_dup_key_unions(edge_records, layout, vertex_keys, &mut proposals)?;
             // Debug oracle: the localized BFS must union exactly the same
             // same-key duplicates as the O(V) global scan. Costs nothing in
             // release; catches any gap in the connectivity contract immediately.
             #[cfg(debug_assertions)]
-            assert_localized_dupscan_complete(vertex_keys, &mut uf);
+            assert_localized_dupscan_complete(vertex_keys, &mut proposals.components);
         }
     }
 
@@ -1308,133 +1420,32 @@ fn collect_merges(
                 &seg_b,
                 vertices,
                 degenerate_len_eps_sq,
-                &mut uf,
-                &mut merged,
+                &mut proposals,
             )?;
-            continue;
-        }
-        if seg_a.len() != 1 || seg_b.len() != 1 {
-            // Irregular topology (sliver chains, overlapping defects): union
-            // every pair of segment-endpoint vertices — across and within
-            // the two sides — that lie within the degenerate length scale.
-            // Position-based and local to the defective edge, so it stays
-            // O(defect size); it collapses duplicate-position vertices with
-            // distinct keys (an exact-tie corner committed under two
-            // attributions) and sliver chains the per-segment logic cannot
-            // pair up.
-            proximity_union_segments(
+        } else if seg_a.len() != 1 || seg_b.len() != 1 {
+            reconcile_irregular_segments(
+                a,
+                b,
                 &seg_a,
                 &seg_b,
                 vertices,
+                cells,
+                cell_indices,
                 degenerate_len_eps_sq,
-                &mut uf,
-                &mut merged,
+                &mut proposals,
             )?;
-
-            // Special-case: one-sided, zero-length boundary edge.
-            //
-            // This shows up when a cell's topology contains an epsilon edge (often from a
-            // near-degenerate configuration). One cell still emits the tiny edge, but the other
-            // side effectively collapses it away, so we can't find a matching segment.
-            //
-            // If we detect an essentially zero-length edge on the emitting side, collapse it
-            // (and, if possible, merge it onto an exactly coincident vertex in the neighbor cell).
-            if (seg_a.len() == 1 && seg_b.is_empty()) || (seg_b.len() == 1 && seg_a.is_empty()) {
-                let (_emit_cell, other_cell, emit_seg) = if seg_a.len() == 1 {
-                    (a, b, seg_a[0])
-                } else {
-                    (b, a, seg_b[0])
-                };
-                let (v0, v1) = emit_seg;
-                let len_sq = dist_sq(vertex_pos(vertices, v0)?, vertex_pos(vertices, v1)?);
-                if len_sq <= degenerate_len_eps_sq {
-                    if uf.union(v0, v1) {
-                        merged += 1;
-                    }
-
-                    // If the neighbor cell contains an exactly coincident vertex, merge onto it
-                    // to improve global consistency across cells.
-                    let other_cell = other_cell as usize;
-                    if other_cell < cells.len() {
-                        let slice = cell_vertex_slice(other_cell as u32, cells, cell_indices)?;
-                        for &vi in [v0, v1].iter() {
-                            let vi_pos = vertex_pos(vertices, vi)?;
-                            let mut best: Option<(u32, f32)> = None;
-                            for &vj in slice {
-                                let d = dist_sq(vi_pos, vertex_pos(vertices, vj)?);
-                                best = Some(match best {
-                                    None => (vj, d),
-                                    Some((best_vj, best_d)) => {
-                                        if d < best_d {
-                                            (vj, d)
-                                        } else {
-                                            (best_vj, best_d)
-                                        }
-                                    }
-                                });
-                            }
-                            if let Some((vj, best_d)) = best {
-                                if best_d <= degenerate_len_eps_sq && uf.union(vi, vj) {
-                                    merged += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-        let (a0, a1) = seg_a[0];
-        let (b0, b1) = seg_b[0];
-
-        let share_a0 = a0 == b0 || a0 == b1;
-        let share_a1 = a1 == b0 || a1 == b1;
-        if share_a0 && share_a1 {
-            continue;
-        }
-        if share_a0 || share_a1 {
-            let (keep_a, keep_b) = if a0 == b0 {
-                (a1, b1)
-            } else if a0 == b1 {
-                (a1, b0)
-            } else if a1 == b0 {
-                (a0, b1)
-            } else {
-                (a0, b0)
-            };
-            let distance_sq = dist_sq(vertex_pos(vertices, keep_a)?, vertex_pos(vertices, keep_b)?);
-            if distance_sq <= degenerate_len_eps_sq && uf.union(keep_a, keep_b) {
-                merged += 1;
-            }
-            continue;
-        }
-
-        let d00a = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b0)?);
-        let d00b = dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b1)?);
-        let d01a = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b1)?);
-        let d01b = dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b0)?);
-        let d00 = d00a + d00b;
-        let d01 = d01a + d01b;
-        if d00 <= d01 {
-            if d00a <= degenerate_len_eps_sq && d00b <= degenerate_len_eps_sq {
-                if uf.union(a0, b0) {
-                    merged += 1;
-                }
-                if uf.union(a1, b1) {
-                    merged += 1;
-                }
-            }
-        } else if d01a <= degenerate_len_eps_sq && d01b <= degenerate_len_eps_sq {
-            if uf.union(a0, b1) {
-                merged += 1;
-            }
-            if uf.union(a1, b0) {
-                merged += 1;
-            }
+        } else {
+            reconcile_segment_pair(
+                seg_a[0],
+                seg_b[0],
+                vertices,
+                degenerate_len_eps_sq,
+                &mut proposals,
+            )?;
         }
     }
 
-    Ok((uf, merged))
+    Ok(proposals.into_parts())
 }
 
 /// Convert the threshold-graph proposals from one round into accepted merge
