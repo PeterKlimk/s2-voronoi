@@ -3,9 +3,9 @@
 //!
 //! Locators are built on demand from a computed diagram (one grid build
 //! over the generators) and answer repeated queries in near-constant time
-//! via the same shell-expansion frontiers the construction pipeline uses:
-//! collect ring candidates nearest-first until the ring certificate proves
-//! no unseen generator can beat the best found. Queries take `&mut self`
+//! via the same shell-expansion layers the construction pipeline uses:
+//! reduce each layer to its nearest resident until the ring certificate
+//! proves no unseen generator can beat the best found. Queries take `&mut self`
 //! (each locator carries its own scratch); clone the locator for use from
 //! multiple threads.
 //!
@@ -118,7 +118,6 @@ pub struct SphereLocator {
     grid: CubeMapGrid,
     canonical: Option<Vec<u32>>,
     scratch: CubeMapGridScratch,
-    batch: Vec<u64>,
 }
 
 impl SphericalVoronoi {
@@ -138,7 +137,6 @@ impl SphericalVoronoi {
             grid,
             canonical: self.weld_map().map(|m| m.to_vec()),
             scratch,
-            batch: Vec::new(),
         }
     }
 }
@@ -155,7 +153,6 @@ impl SphereLocator {
             &self.grid,
             self.canonical.as_deref(),
             &mut self.scratch,
-            &mut self.batch,
             query,
         ))
     }
@@ -194,7 +191,6 @@ impl SphereLocator {
             &self.grid,
             self.canonical.as_deref(),
             &mut self.scratch,
-            &mut self.batch,
             Vec3::from_array(p.to_array()),
         )
     }
@@ -215,15 +211,9 @@ impl SphereLocator {
     {
         map_with_scratch(
             queries,
-            || (self.grid.make_scratch(), Vec::new()),
+            || self.grid.make_scratch(),
             |scratch, p| {
-                sphere_locate_core(
-                    &self.grid,
-                    self.canonical.as_deref(),
-                    &mut scratch.0,
-                    &mut scratch.1,
-                    to_vec3(p),
-                )
+                sphere_locate_core(&self.grid, self.canonical.as_deref(), scratch, to_vec3(p))
             },
         )
     }
@@ -245,11 +235,10 @@ fn sphere_locate_core(
     grid: &CubeMapGrid,
     canonical: Option<&[u32]>,
     scratch: &mut CubeMapGridScratch,
-    batch: &mut Vec<u64>,
     query: Vec3,
 ) -> usize {
     let slot = grid
-        .nearest_unrestricted_slot(query, scratch, batch)
+        .nearest_unrestricted_slot(query, scratch)
         .expect("locator requires a non-empty diagram");
     let idx = grid.point_indices()[slot as usize] as usize;
     match canonical {

@@ -347,25 +347,35 @@ impl CubeMapGrid {
         ShellFrontier::new(self, query, query_idx, scratch, UnrestrictedEligibility)
     }
 
-    /// Nearest grid slot to an external query, reusing `scratch` and `batch`.
+    /// Nearest grid slot to an external query, reusing `scratch`.
     pub(crate) fn nearest_unrestricted_slot(
         &self,
         query: Vec3,
         scratch: &mut CubeMapGridScratch,
-        batch: &mut Vec<PendingKey>,
     ) -> Option<u32> {
         let mut frontier =
             self.unrestricted_shell_frontier(query, self.point_indices.len(), scratch);
+        frontier.initialize();
         let mut best: Option<(f32, u32)> = None;
-        while let Some(layer) = frontier.frontier(batch) {
-            let candidate = (layer.first_dot, pending_key_slot(batch[0]));
+        loop {
+            frontier.build_pending();
+            if frontier.exhausted {
+                break;
+            }
+            // Location needs only the nearest resident in each complete layer.
+            // Packed-key reduction retains the sorted stream's slot tie break
+            // without partitioning, sorting, or copying its unused suffix.
+            let key = *frontier.scratch.pending.iter().min().unwrap();
+            let candidate = (pending_key_dot(key), pending_key_slot(key));
             if best.is_none_or(|(dot, _)| candidate.0 > dot) {
                 best = Some(candidate);
             }
-            if best.is_some_and(|(dot, _)| dot >= layer.unseen_bound) {
+            // Every resident in this layer has been considered. Only the
+            // next-layer certificate can still hide a better candidate.
+            if best.is_some_and(|(dot, _)| dot >= frontier.pending_bound) {
                 break;
             }
-            frontier.advance();
+            frontier.has_pending = false;
         }
         best.map(|(_, slot)| slot)
     }
@@ -515,6 +525,69 @@ mod tests {
     }
 
     #[test]
+    fn nearest_reduction_matches_sorted_frontier() {
+        fn sorted_nearest(grid: &CubeMapGrid, query: Vec3) -> Option<u32> {
+            let mut scratch = grid.make_scratch();
+            let mut batch = Vec::new();
+            let mut frontier =
+                grid.unrestricted_shell_frontier(query, grid.point_indices.len(), &mut scratch);
+            let mut best = None;
+            while let Some(layer) = frontier.frontier(&mut batch) {
+                let candidate = (layer.first_dot, pending_key_slot(batch[0]));
+                if best.is_none_or(|(dot, _)| candidate.0 > dot) {
+                    best = Some(candidate);
+                }
+                if best.is_some_and(|(dot, _)| dot >= layer.unseen_bound) {
+                    break;
+                }
+                frontier.advance();
+            }
+            best.map(|(_, slot)| slot)
+        }
+
+        let mut points = fixture_points();
+        points.extend((0..300).map(|i| {
+            let z = 1.0 - 2.0 * (i as f64 + 0.5) / 300.0;
+            let angle = i as f64 * 2.399963229728653;
+            let r = (1.0 - z * z).sqrt();
+            Vec3::new((r * angle.cos()) as f32, (r * angle.sin()) as f32, z as f32)
+        }));
+        // Repeated points pin the equal-dot, ascending-slot rule. Axis
+        // queries also exercise equal dots in different cells/layers.
+        points.extend([
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ]);
+        points.extend_from_within(..12);
+        let mut queries = points.clone();
+        queries.extend(points.iter().map(|p| -*p));
+        queries.push(Vec3::new(1.0, 1.0, 1.0).normalize());
+        let concentrated: Vec<_> = points
+            .iter()
+            .map(|p| (*p * 0.05 + Vec3::Z).normalize())
+            .collect();
+        let sparse = fixture_points();
+        for sites in [&points[..], &concentrated[..], &sparse[..], &[]] {
+            for res in [1, 2, 4, 13] {
+                let grid = CubeMapGrid::new(sites, res);
+                let mut scratch = grid.make_scratch();
+                for &query in &queries {
+                    assert_eq!(
+                        grid.nearest_unrestricted_slot(query, &mut scratch),
+                        sorted_nearest(&grid, query),
+                        "sites={} res={res} query={query:?}",
+                        sites.len()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn nearest_unrestricted_slot_matches_brute_force() {
         let points = fixture_points();
         let grid = CubeMapGrid::new(&points, 3);
@@ -526,10 +599,7 @@ mod tests {
             .map(|(idx, _)| idx)
             .unwrap();
         let mut scratch = grid.make_scratch();
-        let mut batch = Vec::new();
-        let slot = grid
-            .nearest_unrestricted_slot(query, &mut scratch, &mut batch)
-            .unwrap();
+        let slot = grid.nearest_unrestricted_slot(query, &mut scratch).unwrap();
 
         assert_eq!(grid.point_indices()[slot as usize] as usize, expected);
     }

@@ -366,7 +366,6 @@ fn assess_sampled_ownership(
 
     let grid = build_generator_grid(generators);
     let mut scratch = grid.make_scratch();
-    let mut batch = Vec::new();
 
     let mut samples = 0usize;
     let mut mismatches = 0usize;
@@ -389,8 +388,7 @@ fn assess_sampled_ownership(
             }
 
             let sample = (g * 2.0 + vertices[a] + vertices[b]).normalize();
-            let Some(nearest) = nearest_generator_index(&grid, &mut scratch, &mut batch, sample)
-            else {
+            let Some(nearest) = nearest_generator_index(&grid, &mut scratch, sample) else {
                 continue;
             };
             samples += 1;
@@ -737,10 +735,9 @@ fn build_generator_grid(generators: &[Vec3]) -> CubeMapGrid {
 fn nearest_generator_index(
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    batch: &mut Vec<u64>,
     query: Vec3,
 ) -> Option<usize> {
-    grid.nearest_unrestricted_slot(query, scratch, batch)
+    grid.nearest_unrestricted_slot(query, scratch)
         .map(|slot| grid.point_indices()[slot as usize] as usize)
 }
 
