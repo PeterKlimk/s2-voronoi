@@ -34,33 +34,6 @@ This should be a separate API, not a hidden mode of `compute`: it needs a result
 deterministic reduction rules, and a clear answer for defects that currently require post-assembly
 reconciliation or Hull3d rebuilding. The ordinary full-diagram path and its guarantees remain unchanged.
 
-## Temporal topology hints
-
-A repeated computation could accept the previous diagram or adjacency as a hint. For each site, try
-the previous neighbors first, then let the current spatial query and termination certificate prove
-that no required constraint was omitted. Invalid, stale, or low-value hints simply fall back to the
-normal build.
-
-The API needs stable input identity across frames, explicit behavior for inserted, deleted, welded,
-or reordered sites, and telemetry showing hint acceptance and fallback work. Its first useful target
-is slowly moving sites and iterative relaxation; it should not promise that topology is unchanged.
-
-## Certified partial rebuild
-
-A regional update API would accept a previous result plus changed generators and return a new full
-result, or a patch with explicit application semantics. The difficult part is discovering the dirty
-region soundly: moving one site is both a deletion from its old neighborhood and an insertion into
-its new one, and its influence can propagate beyond an assumed radius.
-
-A plausible design seeds from old and new neighborhoods, rebuilds those cells, and expands across
-the boundary until current query certificates prove that unchanged exterior cells cannot gain or
-lose constraints. It may also need a delta overlay or partial rebuild for the cube-grid index.
-Temporal hints can reduce the work inside the dirty region, but they do not certify its boundary.
-
-The API must define provenance and index stability, patch atomicity, fallback to a full rebuild, and
-how preprocessing weld-class changes invalidate old mappings. A whole-result fingerprint and
-differential tests against a fresh full computation are required before exposing incremental
-success.
 
 ## Promotion rule
 

@@ -888,16 +888,52 @@ tasks and are not duplicated here.
   `pack_edge` facade. Native linked text fell 712 bytes. Paired hardware counters were neutral on
   plain 500k Fibonacci/uniform and report-path Fibonacci, mega, and cubed probes; no wall-clock gate
   was used. Evidence is under `/tmp/s2-exp-reconciliation-evidence/`.
-- **Rejected cold sharing and Tail networks:** one shared directed-link-cycle predicate removed
-  duplicated cold logic but saved only 39 net lines and repeatedly added about 1.45% uniform cycles
-  despite neutral/favorable retired instructions, so it was restored. Making Tail use whole-network
-  sorting for 9--16 candidates simplified its dual path but added about 0.38%/0.48% ordinary
-  instructions. Exact-length ordered top-8 networks were then backward-sliced and exhaustively
-  verified: they saved only 15 of 340 comparators across N=9--16 while adding 1,053 source/data lines
-  and about 4.0 KiB native text. The best outlined variant reduced ordinary instructions by up to
-  0.22% but regressed interleaved Fibonacci/uniform/clustered wall time by 0.52%/0.71%/0.60%; its
-  2.3% mega gain does not justify eight new size kernels. An N=16-only variant was retired-work
-  neutral and made mega cycles 0.79% worse. Raw results are under `/tmp/s2-exp-select8-build/`.
+- **Accepted representation-owner cleanup:** output-resolution span checks now reuse
+  `LiveCellLayout`'s typed bounds logic while retaining stage-specific errors; grid scatter publishes
+  its correlated index/SoA/eager-AoS views through one `ScatteredPointStorage`; and the three sphere
+  validators share one stack-first `CellVertexIds` duplicate tracker without sharing traversal or
+  reporting policy. The prospective `VoronoiConfig` surface now keeps fields private behind
+  builders/getters, and the redundant preprocessing/report and cell-mesh validation aliases were
+  removed before release. Focused release/checked tests and all-feature Clippy passed. Five-round
+  ordinary 500k counter ratios versus the pre-cleanup baseline were `1.000269`/`0.999487`
+  instructions and `1.000404`/`0.999023` branches for Fibonacci/uniform.
+- **Accepted cold output-resolution sharing batch:** one `GroupClassification` owner now classifies
+  exact-zero and positive-simplification interaction groups with shared cell-killing precedence, and
+  `directed_links_form_single_cycle` owns the common manifold-link proof after each caller collects
+  representation-specific edges. Together they remove 25 net Rust lines and prevent two independent
+  policy pairs from drifting.
+- **Batch evidence:** release and checked suites passed. Twenty-pair CPU-pinned default-codegen
+  Fibonacci/uniform ratios were `1.00150`/`1.00113` instructions and `0.99493`/`0.99524` branches;
+  cycle geomeans stayed within the documented 1% layout floor or moved favorably. Ten-pair
+  clustered/mega controls were `1.00013`/`0.99482` instructions, `1.00340`/`0.99953` branches, and
+  `1.00723`/`0.97875` cycles. A 100k positive-simplification probe exercised 10,572 accepted
+  contractions per build; twenty pinned pairs improved instructions/branches to
+  `0.99892`/`0.99713` with no resolved cycle loss. One-codegen-unit ordinary ratios were
+  `1.00007`/`0.99946` instructions and `0.99985`/`0.99894` branches for Fibonacci/uniform, while the
+  triggered probe improved instructions/branches to `0.99806`/`0.99677`. The final measured and
+  rebuilt benchmark `.text` hashes are identical.
+- **Accepted reconciliation merge-proposal boundary:** `MergeProposals` owns the sparse union-find
+  and successful-union count for one `collect_merges` call, so duplicate scans, proximity merging,
+  irregular defects, and ordinary segment matching cannot mutate the components without updating
+  the count. `reconcile_irregular_segments` and `reconcile_segment_pair` now own those two anomaly
+  classes; `collect_merges` remains the explicit mode/record orchestrator. The targeted Clippy
+  inventory drops both its cognitive-complexity and too-many-lines warnings.
+- **Reconciliation batch evidence:** focused reconciliation/local-rebuild/output-resolution/
+  correctness/backend suites, full release, and checked validation passed. Twenty-pair CPU-pinned
+  clean Fibonacci/uniform instruction ratios were `0.99996`/`1.00003`, branches
+  `0.99992`/`1.00006`, and cycles `1.00163`/`1.00699`. Active 100k/500k `cubed` instructions were
+  `1.00010`/`1.00000`, branches `1.00001`/`0.99999`, and cycles `1.00280`/`1.00778`; all remain
+  inside the documented 1% layout floor. One-codegen-unit Fibonacci and 100k/500k `cubed`
+  instructions were `0.99995`/`1.00004`/`1.00000` and cycles
+  `0.99727`/`0.99781`/`0.99774`, confirming neutral executed work.
+- **Rejected Tail networks:** making Tail use whole-network sorting for 9--16 candidates simplified
+  its dual path but added about 0.38%/0.48% ordinary instructions. Exact-length ordered top-8
+  networks were then backward-sliced and exhaustively verified: they saved only 15 of 340
+  comparators across N=9--16 while adding 1,053 source/data lines and about 4.0 KiB native text. The
+  best outlined variant reduced ordinary instructions by up to 0.22% but regressed interleaved
+  Fibonacci/uniform/clustered wall time by 0.52%/0.71%/0.60%; its 2.3% mega gain does not justify
+  eight new size kernels. An N=16-only variant was retired-work neutral and made mega cycles 0.79%
+  worse. Raw results are under `/tmp/s2-exp-select8-build/`.
 
 - **Restored the siloed 24-key network:** `a42980f` experimentally replaced both 24-key kernels
   with a 16-key block plus short-suffix merge, removing 581 net implementation/data lines and about
@@ -908,6 +944,41 @@ tasks and are not duplicated here.
   second handwritten sorting strategy and new invariants. Keep the generated 24-key specialization;
   retain the generator-source cleanup from `5f9a0e7`. Raw evidence remains under
   `/tmp/s2-exp-block-merge/`.
+
+### PERF-004 — Moving-site temporal-maintenance experiments
+
+- **Priority:** P3
+- **Status:** Exhausted, rejected, and removed 2026-08-13
+- **Retained-candidate reconstruction:** retaining nearby candidates and the previous cell cycle
+  made clean independently moving frames about `1.43x` faster than production reconstruction.
+  Correctness required omitted-site certificates and full-production fallback. Recovering a small
+  unsafe component through the mixed temporal/production assembler measured about `0.72x`
+  production speed, so one expired cell could erase the clean-path gain.
+- **Persistent topology:** recomputing vertices from retained owner triples was fast when topology
+  happened to remain stable, but no adjacency, owner-triple, cell-cycle, or output-resolution
+  certificate established that the current topology still matched a fresh construction. Comparing
+  against a fresh result supplied the missing proof only by paying for the work being avoided.
+- **Previous-cycle warm start:** retained each constructed cell's previous neighbor cycle in shard
+  order, mapped generator ids to the fresh grid's spatial slots, clipped those current-frame
+  bisectors first, and then ran the ordinary complete directed query, assembly, reconciliation,
+  output resolution, and validation. An unchanged-frame contract and a 512-site independently
+  moved fixture both returned strict-valid diagrams with the same adjacency as fresh production;
+  the moved fixture explicitly changed adjacency from the seed frame.
+- **Warm-start million-site evidence:** three interleaved 50-frame runs per path at 16 threads gave
+  mean production/warm frame times of `79.569/78.970 ms` on Fibonacci random tangential motion
+  (`0.75%` gain), `99.394/98.984 ms` on uniform random tangential motion (`0.41%` gain), and
+  `76.621/73.980 ms` on the rigid-rotation control (`3.45%` gain). Run-median gains were
+  `0.64%`, `2.11%`, and `3.34%` respectively, with substantial host noise.
+- **Rigid-rotation control:** an allocation-free borrowed transform view and reusable CPU buffer
+  demonstrated the expected large gain when every generator receives one identical rotation and
+  topology cannot change. This is coordinate transformation rather than temporal Voronoi
+  maintenance; renderers already have model transforms, CPU callers can transform exported packed
+  coordinates, and no concrete consumer justified a permanent public API.
+- **Decision:** none of the independently moving paths reached the proposed `10--20%` whole-build
+  threshold with an acceptable correctness and maintenance surface. The complete moving-S2
+  harness, warm-start implementation, rigid-rotation API, benchmark modes, and associated tests
+  were deleted. Reopen only for a concrete independent-motion workload with a materially different
+  validity certificate or algorithm.
 
 ### WORK-001 — Output-resolution certificate soak and component hardening
 
