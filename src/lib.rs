@@ -265,13 +265,6 @@ impl PreprocessReport {
     pub fn did_merge(&self) -> bool {
         self.num_merged > 0
     }
-
-    /// True when the returned diagram's cells were remapped back to the
-    /// original input indices (always the case when welds occurred).
-    #[inline]
-    pub fn did_remap_cells(&self) -> bool {
-        self.did_merge()
-    }
 }
 
 /// Observable degenerate-input handling outcome for a computation run.
@@ -409,10 +402,9 @@ pub struct ComputeOutput {
 /// Configuration for Voronoi computation.
 ///
 /// Construct with [`VoronoiConfig::default`] and adjust through the
-/// `with_*` methods (or by assigning to the public fields); the struct is
-/// `#[non_exhaustive]`, so it cannot be built with struct-literal syntax.
+/// `with_*` methods. Fields are private so adding a setting does not force
+/// callers to rebuild configuration literals.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct VoronoiConfig {
     /// Preprocessing applied before Voronoi computation.
     ///
@@ -420,13 +412,13 @@ pub struct VoronoiConfig {
     /// (~1.4e-6 chord). Welded input indices share one cell in the returned
     /// diagram rather than receiving duplicated boundaries, so strict
     /// validation passes whether or not welds occur.
-    pub preprocess_mode: PreprocessMode,
+    preprocess_mode: PreprocessMode,
     /// Cold-path local rebuilding for rare near-degenerate clipping defects.
     ///
     /// The default tries a normalized local 3D hull rebuild and accepts it only
     /// when strict validation succeeds. Disable this for diagnostics or to
     /// reproduce the raw fast-path residual/error behavior.
-    pub local_rebuild_mode: LocalRebuildMode,
+    local_rebuild_mode: LocalRebuildMode,
     /// Handling for rank-deficient coplanar inputs.
     ///
     /// The default is [`DegenerateMode::PerturbCoplanar`]: certified affine
@@ -435,7 +427,7 @@ pub struct VoronoiConfig {
     /// through [`ComputeReport::degenerate`]. Use [`DegenerateMode::Strict`] to
     /// preserve the ordinary clean-error behavior for these lower-dimensional
     /// inputs.
-    pub degenerate_mode: DegenerateMode,
+    degenerate_mode: DegenerateMode,
     /// Handling for exact stored-zero contractions that would leave an
     /// effective generator with fewer than three boundary vertices.
     ///
@@ -443,7 +435,7 @@ pub struct VoronoiConfig {
     /// output-stage control from preprocessing welding, but sufficient welding
     /// is intended to provide the separation floor that prevents whole-cell
     /// collapse. The policy remains the opt-out and residual safety net.
-    pub cell_killing_policy: CellKillingPolicy,
+    cell_killing_policy: CellKillingPolicy,
 }
 
 impl Default for VoronoiConfig {
@@ -458,25 +450,49 @@ impl Default for VoronoiConfig {
 }
 
 impl VoronoiConfig {
-    /// Default config with the given [`PreprocessMode`].
+    /// Preprocessing applied before Voronoi computation.
+    #[inline]
+    pub const fn preprocess_mode(&self) -> PreprocessMode {
+        self.preprocess_mode
+    }
+
+    /// Cold-path local rebuilding policy.
+    #[inline]
+    pub const fn local_rebuild_mode(&self) -> LocalRebuildMode {
+        self.local_rebuild_mode
+    }
+
+    /// Handling for rank-deficient coplanar inputs.
+    #[inline]
+    pub const fn degenerate_mode(&self) -> DegenerateMode {
+        self.degenerate_mode
+    }
+
+    /// Handling for cell-killing exact stored-zero contractions.
+    #[inline]
+    pub const fn cell_killing_policy(&self) -> CellKillingPolicy {
+        self.cell_killing_policy
+    }
+
+    /// Set the [`PreprocessMode`].
     pub fn with_preprocess_mode(mut self, mode: PreprocessMode) -> Self {
         self.preprocess_mode = mode;
         self
     }
 
-    /// Default config with the given [`LocalRebuildMode`].
+    /// Set the [`LocalRebuildMode`].
     pub fn with_local_rebuild_mode(mut self, mode: LocalRebuildMode) -> Self {
         self.local_rebuild_mode = mode;
         self
     }
 
-    /// Default config with the given [`DegenerateMode`].
+    /// Set the [`DegenerateMode`].
     pub fn with_degenerate_mode(mut self, mode: DegenerateMode) -> Self {
         self.degenerate_mode = mode;
         self
     }
 
-    /// Default config with the given [`CellKillingPolicy`].
+    /// Set the [`CellKillingPolicy`].
     pub fn with_cell_killing_policy(mut self, policy: CellKillingPolicy) -> Self {
         self.cell_killing_policy = policy;
         self

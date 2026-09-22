@@ -9,8 +9,8 @@ use support::points::{
 use voronoi_mesh::{
     compute, compute_by, compute_simplified_with, compute_simplified_with_by, compute_with,
     compute_with_by, compute_with_report, compute_with_report_by, validation::validate,
-    CellSimplificationOptions, DegenerateMode, PreprocessMode, VoronoiConfig, VoronoiError,
-    VoronoiWorkspace,
+    CellKillingPolicy, CellSimplificationOptions, DegenerateMode, LocalRebuildMode, PreprocessMode,
+    VoronoiConfig, VoronoiError, VoronoiWorkspace,
 };
 
 #[test]
@@ -20,6 +20,20 @@ fn test_compute_basic() {
 
     assert_eq!(diagram.num_cells(), 100);
     assert!(diagram.num_vertices() > 0);
+}
+
+#[test]
+fn config_builders_expose_selected_policies() {
+    let config = VoronoiConfig::default()
+        .with_preprocess_mode(PreprocessMode::Disabled)
+        .with_local_rebuild_mode(LocalRebuildMode::Disabled)
+        .with_degenerate_mode(DegenerateMode::Strict)
+        .with_cell_killing_policy(CellKillingPolicy::Error);
+
+    assert_eq!(config.preprocess_mode(), PreprocessMode::Disabled);
+    assert_eq!(config.local_rebuild_mode(), LocalRebuildMode::Disabled);
+    assert_eq!(config.degenerate_mode(), DegenerateMode::Strict);
+    assert_eq!(config.cell_killing_policy(), CellKillingPolicy::Error);
 }
 
 #[test]

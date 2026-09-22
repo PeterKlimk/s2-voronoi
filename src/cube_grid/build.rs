@@ -33,6 +33,19 @@ enum PointViewsBuild {
     Deferred,
 }
 
+/// Point-index and coordinate views published together after grid scatter.
+///
+/// The three SoA vectors always share the spatial slot order described by
+/// `point_indices`; `materialized_slot_points` is either the matching eager AoS
+/// view or empty when its construction is intentionally deferred.
+struct ScatteredPointStorage {
+    point_indices: Vec<u32>,
+    cell_points_x: Vec<f32>,
+    cell_points_y: Vec<f32>,
+    cell_points_z: Vec<f32>,
+    materialized_slot_points: Vec<super::SlotPoint>,
+}
+
 const INPUT_ORDER_SAMPLES: usize = 32;
 /// Below this worker count, topology competes with the point permutation and
 /// lengthens grid construction. At higher concurrency the independent work
@@ -405,14 +418,7 @@ impl CubeMapGrid {
         // These are distinct in implementation between parallel and sequential strategies.
 
         #[cfg(feature = "parallel")]
-        let (
-            cell_offsets,
-            point_indices,
-            cell_points_x,
-            cell_points_y,
-            cell_points_z,
-            materialized_slot_points,
-        ) = {
+        let (cell_offsets, scattered_points) = {
             let num_threads = rayon::current_num_threads();
             let num_chunks = if num_threads >= GRID_BUILD_CHUNK_CAP_MIN_WORKERS {
                 GRID_BUILD_HIGH_CORE_CHUNKS
@@ -550,23 +556,18 @@ impl CubeMapGrid {
 
             (
                 cell_offsets,
-                point_indices,
-                cell_points_x,
-                cell_points_y,
-                cell_points_z,
-                materialized_slot_points,
+                ScatteredPointStorage {
+                    point_indices,
+                    cell_points_x,
+                    cell_points_y,
+                    cell_points_z,
+                    materialized_slot_points,
+                },
             )
         };
 
         #[cfg(not(feature = "parallel"))]
-        let (
-            cell_offsets,
-            point_indices,
-            cell_points_x,
-            cell_points_y,
-            cell_points_z,
-            materialized_slot_points,
-        ) = {
+        let (cell_offsets, scattered_points) = {
             // Step 2: Count
             let mut cell_counts = vec![0u32; num_cells];
             for &cell in &point_cells {
@@ -665,13 +666,22 @@ impl CubeMapGrid {
 
             (
                 cell_offsets,
-                point_indices,
-                cell_points_x,
-                cell_points_y,
-                cell_points_z,
-                materialized_slot_points,
+                ScatteredPointStorage {
+                    point_indices,
+                    cell_points_x,
+                    cell_points_y,
+                    cell_points_z,
+                    materialized_slot_points,
+                },
             )
         };
+        let ScatteredPointStorage {
+            point_indices,
+            cell_points_x,
+            cell_points_y,
+            cell_points_z,
+            materialized_slot_points,
+        } = scattered_points;
 
         // Step 4: collect the independently scheduled topology, or build it
         // here when the overlap policy is disabled.

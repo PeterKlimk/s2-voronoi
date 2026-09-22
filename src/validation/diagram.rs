@@ -2,8 +2,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     cell_signature, classify_edge_uses, edge_key, edge_vertices, owner_arc_class,
-    vertex_is_on_sphere, CellSignature, DisjointSet, EdgeStat, EdgeUseClass, ValidationReport,
-    ANTIPODAL_DOT_EPS,
+    vertex_is_on_sphere, CellSignature, CellVertexIds, DisjointSet, EdgeStat, EdgeUseClass,
+    ValidationReport, ANTIPODAL_DOT_EPS,
 };
 use crate::SphericalVoronoi;
 
@@ -81,14 +81,7 @@ fn scan_cells(diagram: &SphericalVoronoi, weld: &WeldAudit, num_faces: usize) ->
         let len = cell.len();
         total_cell_vertices += len;
 
-        let mut seen_stack = [0u32; 64];
-        let mut seen_stack_len = 0usize;
-        let mut seen_spill = if len > seen_stack.len() {
-            Vec::with_capacity(len)
-        } else {
-            Vec::new()
-        };
-        let use_spill = len > seen_stack.len();
+        let mut seen = CellVertexIds::new(len);
         let mut cell_has_duplicate_vertices = false;
         let mut cell_has_invalid_reference = false;
         let mut distinct_positions = [None; 3];
@@ -101,20 +94,7 @@ fn scan_cells(diagram: &SphericalVoronoi, weld: &WeldAudit, num_faces: usize) ->
                 continue;
             }
 
-            let is_duplicate = if use_spill {
-                if seen_spill.contains(&vi) {
-                    true
-                } else {
-                    seen_spill.push(vi);
-                    false
-                }
-            } else if seen_stack[..seen_stack_len].contains(&vi) {
-                true
-            } else {
-                seen_stack[seen_stack_len] = vi;
-                seen_stack_len += 1;
-                false
-            };
+            let is_duplicate = !seen.insert(vi);
 
             if is_duplicate {
                 cell_has_duplicate_vertices = true;
@@ -133,21 +113,12 @@ fn scan_cells(diagram: &SphericalVoronoi, weld: &WeldAudit, num_faces: usize) ->
 
         cells_with_duplicate_vertices += usize::from(cell_has_duplicate_vertices);
         cells_with_invalid_references += usize::from(cell_has_invalid_reference);
-        let seen_valid_len = if use_spill {
-            seen_spill.len()
-        } else {
-            seen_stack_len
-        };
-        degenerate_cells += usize::from(seen_valid_len < 3);
+        let seen_valid = seen.as_slice();
+        degenerate_cells += usize::from(seen_valid.len() < 3);
         cells_with_fewer_than_three_stored_positions += usize::from(distinct_position_count < 3);
 
         // Canonical duplicate-cell signature over valid references only.
-        let signature = if use_spill {
-            cell_signature(&seen_spill)
-        } else {
-            cell_signature(&seen_stack[..seen_stack_len])
-        };
-        if let Some(signature) = signature {
+        if let Some(signature) = cell_signature(seen_valid) {
             duplicate_cells_count += usize::from(!unique_cell_signatures.insert(signature));
         }
 

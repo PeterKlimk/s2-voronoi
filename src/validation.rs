@@ -304,6 +304,65 @@ fn cell_signature(vertices: &[u32]) -> Option<CellSignature> {
     }
 }
 
+const INLINE_CELL_VERTEX_IDS: usize = 64;
+
+/// Distinct valid vertex ids observed in one cell.
+///
+/// Ordinary cells stay entirely on the stack; unusually high-degree cells use
+/// one capacity-sized spill allocation. All sphere validators share this exact
+/// duplicate definition while retaining their distinct traversal policies.
+struct CellVertexIds {
+    inline: [u32; INLINE_CELL_VERTEX_IDS],
+    inline_len: usize,
+    spill: Vec<u32>,
+    use_spill: bool,
+}
+
+impl CellVertexIds {
+    #[inline]
+    fn new(expected_len: usize) -> Self {
+        let use_spill = expected_len > INLINE_CELL_VERTEX_IDS;
+        Self {
+            inline: [0; INLINE_CELL_VERTEX_IDS],
+            inline_len: 0,
+            spill: if use_spill {
+                Vec::with_capacity(expected_len)
+            } else {
+                Vec::new()
+            },
+            use_spill,
+        }
+    }
+
+    /// Insert `vertex`, returning false when it was already present.
+    #[inline]
+    fn insert(&mut self, vertex: u32) -> bool {
+        if self.use_spill {
+            if self.spill.contains(&vertex) {
+                false
+            } else {
+                self.spill.push(vertex);
+                true
+            }
+        } else if self.inline[..self.inline_len].contains(&vertex) {
+            false
+        } else {
+            self.inline[self.inline_len] = vertex;
+            self.inline_len += 1;
+            true
+        }
+    }
+
+    #[inline]
+    fn as_slice(&self) -> &[u32] {
+        if self.use_spill {
+            &self.spill
+        } else {
+            &self.inline[..self.inline_len]
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DisjointSet {
     parent: Vec<usize>,
@@ -350,16 +409,6 @@ impl DisjointSet {
 /// heuristics.
 pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     validate_impl(diagram)
-}
-
-/// Validate whether a simplified spherical cell mesh is a connected,
-/// oriented, closed S2 subdivision with dense geometry and coherent source
-/// provenance.
-///
-/// This checks generic mesh structure only. It deliberately makes no Voronoi,
-/// nearest-site, or Delaunay claim about the mesh's source sites.
-pub fn validate_cell_mesh(mesh: &crate::SphericalCellMesh) -> crate::CellMeshValidationReport {
-    mesh.validate()
 }
 
 /// Opt-in post-build verification gate (env `VORONOI_MESH_VERIFY=1`).
@@ -554,57 +603,27 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
             continue;
         }
         let len = cell.len();
-        let mut seen_stack = [0u32; 64];
-        let mut seen_stack_len = 0usize;
-        let mut seen_spill = if len > seen_stack.len() {
-            Vec::with_capacity(len)
-        } else {
-            Vec::new()
-        };
-        let use_spill = len > seen_stack.len();
+        let mut seen = CellVertexIds::new(len);
 
         for &vi in cell.vertex_indices {
             if (vi as usize) >= num_vertices {
                 return Err(StrictValidationIssue::InvalidVertexReference.message());
             }
 
-            let is_duplicate = if use_spill {
-                if seen_spill.contains(&vi) {
-                    true
-                } else {
-                    seen_spill.push(vi);
-                    false
-                }
-            } else if seen_stack[..seen_stack_len].contains(&vi) {
-                true
-            } else {
-                seen_stack[seen_stack_len] = vi;
-                seen_stack_len += 1;
-                false
-            };
-
-            if is_duplicate {
+            if !seen.insert(vi) {
                 return Err(StrictValidationIssue::DuplicateVertexInCell.message());
             }
+
             let count = &mut vertex_cell_count[vi as usize];
             *count = count.saturating_add(1);
         }
 
-        let seen_valid_len = if use_spill {
-            seen_spill.len()
-        } else {
-            seen_stack_len
-        };
-        if seen_valid_len < 3 {
+        let seen_valid = seen.as_slice();
+        if seen_valid.len() < 3 {
             return Err(StrictValidationIssue::DegenerateCell.message());
         }
 
-        let signature = if use_spill {
-            cell_signature(&seen_spill)
-        } else {
-            cell_signature(&seen_stack[..seen_stack_len])
-        };
-        if let Some(signature) = signature {
+        if let Some(signature) = cell_signature(seen_valid) {
             if !unique_cell_signatures.insert(signature) {
                 return Err(StrictValidationIssue::DuplicateCell.message());
             }
@@ -746,14 +765,7 @@ fn scan_cells_strict(
         };
         let len = span.len();
 
-        let mut seen_stack = [0u32; 64];
-        let mut seen_stack_len = 0usize;
-        let mut seen_spill = if len > seen_stack.len() {
-            Vec::with_capacity(len)
-        } else {
-            Vec::new()
-        };
-        let use_spill = len > seen_stack.len();
+        let mut seen = CellVertexIds::new(len);
 
         for &vi in span {
             if (vi as usize) >= num_vertices {
@@ -764,21 +776,7 @@ fn scan_cells_strict(
                 ));
                 break 'cells;
             }
-            let is_duplicate = if use_spill {
-                if seen_spill.contains(&vi) {
-                    true
-                } else {
-                    seen_spill.push(vi);
-                    false
-                }
-            } else if seen_stack[..seen_stack_len].contains(&vi) {
-                true
-            } else {
-                seen_stack[seen_stack_len] = vi;
-                seen_stack_len += 1;
-                false
-            };
-            if is_duplicate {
+            if !seen.insert(vi) {
                 out.err = Some((
                     ci as u32,
                     RANK_VERTEX,
@@ -789,12 +787,8 @@ fn scan_cells_strict(
             vertex_cell_count[vi as usize].fetch_add(1, Relaxed);
         }
 
-        let seen_valid_len = if use_spill {
-            seen_spill.len()
-        } else {
-            seen_stack_len
-        };
-        if seen_valid_len < 3 {
+        let seen_valid = seen.as_slice();
+        if seen_valid.len() < 3 {
             out.err = Some((
                 ci as u32,
                 RANK_DEGENERATE,
@@ -806,12 +800,7 @@ fn scan_cells_strict(
         // Signature emission mirrors the sequential insert point: after the
         // rank-0..2 checks, before the edge checks — a cell that fails an edge
         // check still participates in duplicate-cell detection.
-        let signature = if use_spill {
-            cell_signature(&seen_spill)
-        } else {
-            cell_signature(&seen_stack[..seen_stack_len])
-        };
-        if let Some(signature) = signature {
+        if let Some(signature) = cell_signature(seen_valid) {
             out.signatures.push((signature, ci as u32));
         }
 
