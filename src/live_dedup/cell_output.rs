@@ -1,13 +1,43 @@
 //! Per-cell extraction output and failure types consumed by live dedup.
 
 use glam::Vec3;
+use std::hint::select_unpredictable;
 
 /// Vertex key for deduplication: sorted triplet of generator indices.
 /// The triplet `(A, B, C)` represents the circumcenter of generators `A, B, C`.
 pub(crate) type VertexKey = [u32; 3];
 
-/// Vertex data: `(key, position)`. Uses `u32` indices to save space.
-pub(crate) type VertexData = (VertexKey, Vec3);
+/// Generator triple attributed to an extracted corner, without an ordering
+/// requirement. Endpoint membership and XOR are independent of its order.
+pub(crate) type VertexAttribution = [u32; 3];
+
+/// Extracted vertex attribution and position. The generator triple may be
+/// unordered: edge checks consume it as a set/XOR, and emission canonicalizes
+/// unresolved triples before owner selection or persistent key storage. The
+/// non-AVX2 extractor must emit sorted triples for its owner-first emission path.
+pub(crate) type VertexData = (VertexAttribution, Vec3);
+
+#[inline(always)]
+fn cswap_u32(a: &mut u32, b: &mut u32) {
+    let va = *a;
+    let vb = *b;
+    let cond = va <= vb;
+    *a = select_unpredictable(cond, va, vb);
+    *b = select_unpredictable(cond, vb, va);
+}
+
+/// Canonicalize a corner attribution for owner selection and stored key identity.
+#[inline(always)]
+pub(crate) fn sort3_u32(a: u32, b: u32, c: u32) -> VertexKey {
+    // Sorting network (3 elements): (0,1) (1,2) (0,1)
+    let mut x0 = a;
+    let mut x1 = b;
+    let mut x2 = c;
+    cswap_u32(&mut x0, &mut x1);
+    cswap_u32(&mut x1, &mut x2);
+    cswap_u32(&mut x0, &mut x1);
+    [x0, x1, x2]
+}
 
 /// Reasons a cell build can terminate unsuccessfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +69,9 @@ pub(crate) struct CellBuildError {
 /// A reusable buffer to hold the extracted output of clipping a cell.
 #[derive(Default)]
 pub(crate) struct CellOutputBuffer {
+    /// Native AVX2 emission accepts unordered attributions and canonicalizes
+    /// only unresolved ones. Other targets require canonical triples because
+    /// their owner-first emission shape precedes the resolved-index test.
     pub(crate) vertices: Vec<VertexData>,
     pub(crate) edge_neighbor_globals: Vec<u32>,
     pub(crate) edge_neighbor_slots: Vec<u32>,

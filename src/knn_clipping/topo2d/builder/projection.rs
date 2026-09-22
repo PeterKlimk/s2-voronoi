@@ -6,32 +6,10 @@ use crate::live_dedup::CellFailure;
 use crate::policy::{GNOMONIC_INITIAL_BOUNDING_EXTENT, GNOMONIC_TANGENT_BASIS_SOUTH_POLE_SWITCH_Z};
 use crate::tolerances::GNOMONIC_METRIC_R2_RELATIVE_PAD;
 use glam::{DVec3, Vec3};
-use std::hint::select_unpredictable;
 
 // Debug-only invariant threshold for canonical f32 neighbors. This remains
 // local diagnostic policy rather than a production acceptance tolerance.
 const DEBUG_NEIGHBOR_NORM_SQUARED_ERROR_LIMIT: f32 = 1e-5;
-
-#[inline(always)]
-fn cswap_u32(a: &mut u32, b: &mut u32) {
-    let va = *a;
-    let vb = *b;
-    let cond = va <= vb;
-    *a = select_unpredictable(cond, va, vb);
-    *b = select_unpredictable(cond, vb, va);
-}
-
-#[inline(always)]
-pub(crate) fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
-    // Sorting network (3 elements): (0,1) (1,2) (0,1)
-    let mut x0 = a;
-    let mut x1 = b;
-    let mut x2 = c;
-    cswap_u32(&mut x0, &mut x1);
-    cswap_u32(&mut x1, &mut x2);
-    cswap_u32(&mut x0, &mut x1);
-    [x0, x1, x2]
-}
 
 /// Orthonormal tangent basis for gnomonic projection.
 pub(crate) struct TangentBasis {
@@ -271,7 +249,7 @@ impl GnomonicBuilder {
     pub(super) fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.constraints
             .iter()
-            .map(|constraint| constraint.neighbor_idx)
+            .map(|constraint| constraint.neighbor_idx as usize)
     }
 
     pub(crate) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {

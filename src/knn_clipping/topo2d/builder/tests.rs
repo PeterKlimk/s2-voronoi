@@ -1,6 +1,6 @@
 use super::projection::MIN_PROJECTION_COS;
 use super::*;
-use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane, INVALID_PLANE_ID};
+use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
 use crate::live_dedup::CellOutputBuffer;
 use glam::Vec3;
 use std::cmp::Ordering;
@@ -395,6 +395,53 @@ fn valid_bounded_cells_reconstruct_vertices_with_healthy_norm() {
 }
 
 #[test]
+fn extraction_preserves_large_generator_ids_and_edge_slots() {
+    let generator = u32::MAX - 5;
+    let neighbors = [u32::MAX - 3, u32::MAX - 2, u32::MAX - 1];
+    let slots = [65_537, 90_001, 123_456];
+    let directions = [
+        Vec3::new(0.25, 0.0, 1.0).normalize(),
+        Vec3::new(-0.125, 0.2165, 1.0).normalize(),
+        Vec3::new(-0.125, -0.2165, 1.0).normalize(),
+    ];
+    let mut builder = Topo2DBuilder::new(generator as usize, Vec3::Z);
+    for i in 0..3 {
+        builder
+            .clip_with_slot_result(neighbors[i] as usize, slots[i], directions[i])
+            .unwrap();
+    }
+    assert_eq!(
+        builder
+            .as_gnomonic()
+            .neighbor_indices_iter()
+            .collect::<Vec<_>>(),
+        neighbors.map(|id| id as usize)
+    );
+    let mut output = CellOutputBuffer::default();
+    builder.to_vertex_data_full(&mut output).unwrap();
+    let mut actual: Vec<_> = output
+        .vertices
+        .iter()
+        .map(|&(mut key, _)| {
+            key.sort_unstable();
+            key
+        })
+        .collect();
+    let mut expected = [
+        [generator, neighbors[0], neighbors[1]],
+        [generator, neighbors[1], neighbors[2]],
+        [generator, neighbors[0], neighbors[2]],
+    ];
+    actual.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+    output.edge_neighbor_globals.sort_unstable();
+    output.edge_neighbor_slots.sort_unstable();
+    assert_eq!(output.edge_neighbor_globals, neighbors);
+    assert_eq!(output.edge_neighbor_slots, slots);
+}
+
+#[test]
 fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
     let gnomonic = builder.as_gnomonic_mut();
@@ -409,11 +456,11 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     gnomonic.poly_b.us[2] = 0.0;
     gnomonic.poly_b.vs[2] = 0.5;
     gnomonic.poly_b.vertex_planes[0] = (7, 8);
-    gnomonic.poly_b.vertex_planes[1] = (7, 8);
-    gnomonic.poly_b.vertex_planes[2] = (7, 8);
-    gnomonic.poly_b.edge_planes[0] = INVALID_PLANE_ID;
-    gnomonic.poly_b.edge_planes[1] = INVALID_PLANE_ID;
-    gnomonic.poly_b.edge_planes[2] = INVALID_PLANE_ID;
+    gnomonic.poly_b.vertex_planes[1] = (8, 7);
+    gnomonic.poly_b.vertex_planes[2] = (7, 7);
+    gnomonic.poly_b.edge_planes[0] = 8;
+    gnomonic.poly_b.edge_planes[1] = 7;
+    gnomonic.poly_b.edge_planes[2] = 7;
     gnomonic.use_a = false;
 
     let mut buffer = CellOutputBuffer::default();

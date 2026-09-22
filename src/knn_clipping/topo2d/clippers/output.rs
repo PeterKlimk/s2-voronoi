@@ -16,6 +16,8 @@ pub(super) fn build_output(
     exit_idx: usize,
     hp_plane_idx: PlaneId,
 ) {
+    #[cfg(not(any(test, debug_assertions)))]
+    let _ = exit_edge_plane;
     out.len = 0;
     let mut max_r2 = 0.0f64;
     let mut has_bounding = false;
@@ -25,11 +27,15 @@ pub(super) fn build_output(
         ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
             let u = $u;
             let v = $v;
+            #[cfg(any(test, debug_assertions))]
             let vp = $vp;
-            out.push_raw(u, v, vp, $ep);
+            #[cfg(not(any(test, debug_assertions)))]
+            let vp = (0, 0);
+            let ep = $ep;
+            out.push_raw(u, v, vp, ep);
             max_r2 = max_r2.max(fp::mul_add_unfused_f64(u, u, v * v));
             if track_bounding {
-                has_bounding |= vp.0 == INVALID_PLANE_ID;
+                has_bounding |= ep == INVALID_PLANE_ID;
             }
         }};
     }

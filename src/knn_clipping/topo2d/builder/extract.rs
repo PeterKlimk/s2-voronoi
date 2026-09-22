@@ -1,10 +1,10 @@
-use super::projection::sort3_u32;
 use super::{
     BuilderDebugState, BuilderImpl, ExtractionInvariantFailure, FallbackBuilder, GnomonicBuilder,
     SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
 };
 use crate::fp;
 use crate::knn_clipping::topo2d::types::INVALID_PLANE_ID;
+use crate::live_dedup::sort3_u32;
 use crate::live_dedup::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
 
@@ -70,10 +70,20 @@ impl GnomonicBuilder {
         debug_assert!(vertex_indices.len() >= poly.len);
 
         let gen_idx = self.generator_idx as u32;
+        // Consecutive corners share their intervening edge constraint. Seed
+        // the closing edge once, then carry the preceding neighbor forward.
+        let Some(last) = self
+            .constraints
+            .get(poly.edge_planes[poly.len - 1] as usize)
+        else {
+            return Err(CellFailure::NoValidSeed);
+        };
+        let mut previous_neighbor = last.neighbor_idx;
         for i in 0..poly.len {
             let u = poly.us[i];
             let v = poly.vs[i];
-            let (plane_a, plane_b) = poly.vertex_planes[i];
+            #[cfg(any(test, debug_assertions))]
+            poly.vertex_planes(i);
 
             let source = DVec3::new(
                 fp::mul_add_unfused_f64(
@@ -110,17 +120,17 @@ impl GnomonicBuilder {
             }
             let v_pos = crate::types::canonical_vec3_from_dvec3_with_len_squared(source, len2);
 
-            let plane_a = plane_a as usize;
-            let plane_b = plane_b as usize;
-            let Some(n1) = self.constraints.get(plane_a).map(|c| c.neighbor_idx) else {
+            let Some(constraint) = self.constraints.get(poly.edge_planes[i] as usize) else {
                 return Err(CellFailure::NoValidSeed);
             };
-            let Some(n2) = self.constraints.get(plane_b).map(|c| c.neighbor_idx) else {
-                return Err(CellFailure::NoValidSeed);
-            };
-            let n1 = n1 as u32;
-            let n2 = n2 as u32;
-            let key = sort3_u32(gen_idx, n1, n2);
+            let neighbor = constraint.neighbor_idx;
+            // Native emission resolves most corners from incoming edge
+            // checks before it needs a canonical ownership key.
+            #[cfg(target_feature = "avx2")]
+            let key = [gen_idx, previous_neighbor, neighbor];
+            #[cfg(not(target_feature = "avx2"))]
+            let key = sort3_u32(gen_idx, previous_neighbor, neighbor);
+            previous_neighbor = neighbor;
             // SAFETY: all three vectors were cleared and reserved for
             // `poly.len` immediately above; `i` is in `0..poly.len`.
             unsafe {
@@ -129,27 +139,14 @@ impl GnomonicBuilder {
                 vertex_indices.get_unchecked_mut(i).write(u32::MAX);
             }
 
-            let edge_plane = poly.edge_planes[i];
-            if edge_plane == INVALID_PLANE_ID {
-                unsafe {
-                    #[cfg(any(test, debug_assertions))]
-                    edge_neighbor_globals.get_unchecked_mut(i).write(u32::MAX);
-                    edge_neighbor_slots.get_unchecked_mut(i).write(u32::MAX);
-                }
-            } else {
-                let edge_plane = edge_plane as usize;
-                let Some(constraint) = self.constraints.get(edge_plane) else {
-                    return Err(CellFailure::NoValidSeed);
-                };
-                unsafe {
-                    #[cfg(any(test, debug_assertions))]
-                    edge_neighbor_globals
-                        .get_unchecked_mut(i)
-                        .write(constraint.neighbor_idx as u32);
-                    edge_neighbor_slots
-                        .get_unchecked_mut(i)
-                        .write(constraint.neighbor_slot);
-                }
+            // This outgoing edge supplies both the current corner's second
+            // generator and the directed edge-check slot.
+            unsafe {
+                #[cfg(any(test, debug_assertions))]
+                edge_neighbor_globals.get_unchecked_mut(i).write(neighbor);
+                edge_neighbor_slots
+                    .get_unchecked_mut(i)
+                    .write(constraint.neighbor_slot);
             }
         }
         // Every spare-capacity slot above is initialized on success. On any
@@ -182,7 +179,7 @@ impl GnomonicBuilder {
         let mut active = vec![false; self.constraints.len()];
 
         for i in 0..poly.len {
-            let (pa, pb) = poly.vertex_planes[i];
+            let (pa, pb) = poly.vertex_planes(i);
             let pa = pa as usize;
             let pb = pb as usize;
             if pa < active.len() {
@@ -242,7 +239,7 @@ impl GnomonicBuilder {
                 });
             }
 
-            let (plane_a, plane_b) = poly.vertex_planes[i];
+            let (plane_a, plane_b) = poly.vertex_planes(i);
             let plane_a = plane_a as usize;
             let plane_b = plane_b as usize;
             if plane_a >= neighbor_index_count || plane_b >= neighbor_index_count {

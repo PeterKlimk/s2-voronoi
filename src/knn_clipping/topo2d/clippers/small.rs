@@ -98,13 +98,14 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
             let u = $u;
             let v = $v;
             let vp = $vp;
-            out.push_raw(u, v, vp, $ep);
+            let ep = $ep;
+            out.push_raw(u, v, vp, ep);
             let r2 = r2_of(u, v);
             if r2 > max_r2 {
                 max_r2 = r2;
             }
             if track_bounding {
-                has_bounding |= vp.0 == super::super::types::INVALID_PLANE_ID;
+                has_bounding |= ep == super::super::types::INVALID_PLANE_ID;
             }
         }};
     }
@@ -134,7 +135,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
         push!(
             poly.us[i],
             poly.vs[i],
-            poly.vertex_planes[i],
+            poly.vertex_planes(i),
             poly.edge_planes[i]
         );
         if i == exit_idx {
@@ -216,7 +217,6 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
-    let vps = poly.vertex_planes.as_ptr();
     let eps = poly.edge_planes.as_ptr();
 
     // For N <= 4 (triangles/quads) only the low four lanes are live, so one
@@ -268,11 +268,15 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
         ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
             let u = $u;
             let v = $v;
+            #[cfg(any(test, debug_assertions))]
             let vp = $vp;
             let ep = $ep;
             *out.us.get_unchecked_mut(out_len) = u;
             *out.vs.get_unchecked_mut(out_len) = v;
-            *out.vertex_planes.get_unchecked_mut(out_len) = vp;
+            #[cfg(any(test, debug_assertions))]
+            {
+                *out.vertex_planes.get_unchecked_mut(out_len) = vp;
+            }
             *out.edge_planes.get_unchecked_mut(out_len) = ep;
             out_len += 1;
             let r2 = r2_of(u, v);
@@ -280,7 +284,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
                 max_r2 = r2;
             }
             if TRACK_BOUNDING {
-                has_bounding |= vp.0 == super::super::types::INVALID_PLANE_ID;
+                has_bounding |= ep == super::super::types::INVALID_PLANE_ID;
             }
         }};
     }
@@ -306,7 +310,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 
         let mut i = entry_next;
         loop {
-            push_idx!(*us.add(i), *vs.add(i), *vps.add(i), *eps.add(i));
+            push_idx!(*us.add(i), *vs.add(i), poly.vertex_planes[i], *eps.add(i));
             if i == exit_idx {
                 break;
             }
@@ -330,6 +334,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
             *vs.add(exit_next) - *vs.add(exit_idx),
             *vs.add(exit_idx),
         );
+        #[cfg(any(test, debug_assertions))]
         let exit_ep = *eps.add(exit_idx);
         push_idx!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
     }

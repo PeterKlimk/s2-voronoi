@@ -13,7 +13,7 @@ use super::types::{
     LocalId,
 };
 use super::with_two_mut;
-use crate::live_dedup::{VertexData, VertexKey};
+use crate::live_dedup::{VertexAttribution, VertexData};
 use crate::packed_layout::PackedSlotLayout;
 
 #[inline]
@@ -57,7 +57,7 @@ pub(super) const MALFORMED_THIRD: u32 = u32::MAX;
 /// reachable-and-handled family as the four asserts demoted for the strict
 /// strict keep rule.
 #[inline]
-pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> Option<u32> {
+pub(super) fn third_for_edge_endpoint(key: VertexAttribution, a: u32, b: u32) -> Option<u32> {
     (key.contains(&a) && key.contains(&b)).then(|| key[0] ^ key[1] ^ key[2] ^ a ^ b)
 }
 
@@ -67,13 +67,13 @@ pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> Option<
 /// repeated membership checks out of this edge path. See
 /// `docs/performance.md#source-pinned-performance-decisions`.
 #[inline]
-fn xor_third(key: VertexKey, a: u32, b: u32) -> u32 {
+fn xor_third(key: VertexAttribution, a: u32, b: u32) -> u32 {
     key[0] ^ key[1] ^ key[2] ^ a ^ b
 }
 
 /// Both endpoint thirds for edge `key` on a VERIFIED cell (unchecked XOR).
 #[inline]
-fn thirds_verified(key: EdgeKey, endpoint_keys: [VertexKey; 2]) -> [u32; 2] {
+fn thirds_verified(key: EdgeKey, endpoint_keys: [VertexAttribution; 2]) -> [u32; 2] {
     let (a, b) = unpack_edge_key(key);
     [
         xor_third(endpoint_keys[0], a, b),
@@ -88,7 +88,7 @@ pub(super) fn thirds_for_emit(
     keys_verified: bool,
     unresolved: &mut Vec<EdgeRecord>,
     key: EdgeKey,
-    endpoint_keys: [VertexKey; 2],
+    endpoint_keys: [VertexAttribution; 2],
 ) -> [u32; 2] {
     if keys_verified {
         thirds_verified(key, endpoint_keys)
@@ -108,7 +108,7 @@ pub(super) fn thirds_for_emit(
 pub(super) fn thirds_or_record(
     unresolved: &mut Vec<EdgeRecord>,
     key: EdgeKey,
-    endpoint_keys: [VertexKey; 2],
+    endpoint_keys: [VertexAttribution; 2],
 ) -> [u32; 2] {
     let (a, b) = unpack_edge_key(key);
     let t0 = third_for_edge_endpoint(endpoint_keys[0], a, b);
@@ -675,6 +675,39 @@ mod tests {
         // Malformed attribution: the key lacks one or both endpoints.
         assert_eq!(third_for_edge_endpoint([1, 5, 9], 1, 7), None);
         assert_eq!(third_for_edge_endpoint([1, 5, 9], 2, 3), None);
+    }
+
+    #[test]
+    fn endpoint_thirds_ignore_attribution_order() {
+        let edge = pack_edge(10, 20);
+        let first = [
+            [5, 10, 20],
+            [5, 20, 10],
+            [10, 5, 20],
+            [10, 20, 5],
+            [20, 5, 10],
+            [20, 10, 5],
+        ];
+        let second = [
+            [10, 20, 30],
+            [10, 30, 20],
+            [20, 10, 30],
+            [20, 30, 10],
+            [30, 10, 20],
+            [30, 20, 10],
+        ];
+        for left in first {
+            for right in second {
+                for verified in [false, true] {
+                    let mut unresolved = Vec::new();
+                    assert_eq!(
+                        thirds_for_emit(verified, &mut unresolved, edge, [left, right]),
+                        [5, 30]
+                    );
+                    assert!(unresolved.is_empty());
+                }
+            }
+        }
     }
 
     #[test]

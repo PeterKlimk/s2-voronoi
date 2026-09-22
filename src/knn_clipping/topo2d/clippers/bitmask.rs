@@ -137,7 +137,10 @@ mod tests {
             poly.push_raw(
                 theta.cos(),
                 theta.sin(),
-                (plane_id(k), plane_id((k + 1) % MAX_POLY_VERTICES)),
+                (
+                    plane_id((k + MAX_POLY_VERTICES - 1) % MAX_POLY_VERTICES),
+                    plane_id(k),
+                ),
                 plane_id(k),
             );
         }

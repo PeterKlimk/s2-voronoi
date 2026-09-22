@@ -411,6 +411,12 @@ pub(crate) fn emit_cell_output(
                 }
             }
 
+            // Native gnomonic extraction leaves triples unordered. Both
+            // endpoint reconciliation and the resolved fast path are order
+            // independent; canonicalize only keys that cross into persistent
+            // owner/deferred storage. Fallback triples may already be sorted.
+            #[cfg(target_feature = "avx2")]
+            let key = super::sort3_u32(key[0], key[1], key[2]);
             let owner = key[0] as usize;
             debug_assert!(owner < assignment.generator_bin.len());
             // SAFETY: vertex keys contain the current generator and two

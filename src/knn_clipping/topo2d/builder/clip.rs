@@ -30,10 +30,13 @@ impl GnomonicBuilder {
         neighbor_idx: usize,
         neighbor_slot: u32,
     ) -> Result<ClipResult, CellFailure> {
+        // Production neighbor ids come from u32 grid slots/point records;
+        // grid construction rejects point counts outside that representation.
+        debug_assert!(u32::try_from(neighbor_idx).is_ok());
         match clip_result {
             ClipResult::TooManyVertices => {
                 self.constraints.push(GnomonicConstraint {
-                    neighbor_idx,
+                    neighbor_idx: neighbor_idx as u32,
                     neighbor_slot,
                 });
                 self.term_cache_valid = false;
@@ -42,7 +45,7 @@ impl GnomonicBuilder {
             }
             ClipResult::Changed => {
                 self.constraints.push(GnomonicConstraint {
-                    neighbor_idx,
+                    neighbor_idx: neighbor_idx as u32,
                     neighbor_slot,
                 });
                 self.use_a = !self.use_a;
@@ -52,6 +55,8 @@ impl GnomonicBuilder {
         }
 
         let poly = self.current_poly();
+        #[cfg(any(test, debug_assertions))]
+        poly.assert_boundary_provenance();
         if poly.len < 3 {
             self.failed = Some(CellFailure::ClippedAway);
             return Err(CellFailure::ClippedAway);

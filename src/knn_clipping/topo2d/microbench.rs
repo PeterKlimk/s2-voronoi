@@ -182,9 +182,11 @@ pub(crate) fn run_clip_convex_microbench() {
                 got.vs[i]
             );
             assert_eq!(
-                expected.vertex_planes[i], got.vertex_planes[i],
+                expected.vertex_planes(i),
+                got.vertex_planes(i),
                 "{label}: vertex_planes[{i}] mismatch (expected {:?}, got {:?})",
-                expected.vertex_planes[i], got.vertex_planes[i]
+                expected.vertex_planes(i),
+                got.vertex_planes(i)
             );
             assert_eq!(
                 expected.edge_planes[i], got.edge_planes[i],
@@ -206,7 +208,10 @@ pub(crate) fn run_clip_convex_microbench() {
             let v = radius * s;
             p.us[i] = u;
             p.vs[i] = v;
-            p.vertex_planes[i] = (plane_id(i), plane_id((i + 1) % N));
+            #[cfg(any(test, debug_assertions))]
+            {
+                p.vertex_planes[i] = (plane_id((i + N - 1) % N), plane_id(i));
+            }
             p.edge_planes[i] = plane_id(i);
             p.max_r2 = p.max_r2.max(u * u + v * v);
         }

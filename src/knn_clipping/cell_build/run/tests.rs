@@ -356,7 +356,15 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
 }
 
 fn signature(buffer: &crate::live_dedup::CellOutputBuffer) -> CellSignature {
-    let mut vertex_keys: Vec<[u32; 3]> = buffer.vertices.iter().map(|(key, _)| *key).collect();
+    let mut vertex_keys: Vec<[u32; 3]> = buffer
+        .vertices
+        .iter()
+        .map(|(key, _)| {
+            let mut key = *key;
+            key.sort_unstable();
+            key
+        })
+        .collect();
     vertex_keys.sort_unstable();
     let mut edge_neighbors = buffer.edge_neighbor_globals.clone();
     edge_neighbors.sort_unstable();

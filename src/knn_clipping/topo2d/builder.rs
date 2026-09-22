@@ -87,7 +87,9 @@ pub(crate) struct GnomonicBuilder {
 
 #[derive(Clone, Copy)]
 struct GnomonicConstraint {
-    neighbor_idx: usize,
+    // The grid already bounds both identifiers to u32. Keep the accepted
+    // constraint record at eight bytes rather than widening the global id.
+    neighbor_idx: u32,
     neighbor_slot: u32,
 }
 
@@ -318,9 +320,9 @@ impl Topo2DBuilder {
                 .map(|constraint| {
                     FallbackConstraint::from_neighbor(
                         builder.generator,
-                        constraint.neighbor_idx,
+                        constraint.neighbor_idx as usize,
                         constraint.neighbor_slot,
-                        points[constraint.neighbor_idx],
+                        points[constraint.neighbor_idx as usize],
                     )
                 })
                 .collect(),
@@ -341,9 +343,9 @@ impl FallbackBuilder {
             .map(|constraint| {
                 FallbackConstraint::from_neighbor(
                     builder.generator,
-                    constraint.neighbor_idx,
+                    constraint.neighbor_idx as usize,
                     constraint.neighbor_slot,
-                    points[constraint.neighbor_idx],
+                    points[constraint.neighbor_idx as usize],
                 )
             })
             .collect();

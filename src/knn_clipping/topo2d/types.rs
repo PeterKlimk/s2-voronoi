@@ -59,6 +59,9 @@ pub(crate) struct PolyBuffer {
     pub has_bounding_ref: bool,
     pub us: [f64; MAX_POLY_VERTICES],
     pub vs: [f64; MAX_POLY_VERTICES],
+    // Independent oracle: retain the original intersection/survivor pair
+    // writes in checked builds, but derive provenance from edges in release.
+    #[cfg(any(test, debug_assertions))]
     pub vertex_planes: [(PlaneId, PlaneId); MAX_POLY_VERTICES],
     pub edge_planes: [PlaneId; MAX_POLY_VERTICES],
 }
@@ -72,6 +75,7 @@ impl PolyBuffer {
             has_bounding_ref: false,
             us: [0.0; MAX_POLY_VERTICES],
             vs: [0.0; MAX_POLY_VERTICES],
+            #[cfg(any(test, debug_assertions))]
             vertex_planes: [(0, 0); MAX_POLY_VERTICES],
             edge_planes: [0; MAX_POLY_VERTICES],
         }
@@ -84,9 +88,12 @@ impl PolyBuffer {
         self.vs[1] = -bound * 0.5;
         self.us[2] = bound * 0.866;
         self.vs[2] = -bound * 0.5;
-        self.vertex_planes[0] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
-        self.vertex_planes[1] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
-        self.vertex_planes[2] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
+        #[cfg(any(test, debug_assertions))]
+        {
+            self.vertex_planes[0] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
+            self.vertex_planes[1] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
+            self.vertex_planes[2] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
+        }
         self.edge_planes[0] = INVALID_PLANE_ID;
         self.edge_planes[1] = INVALID_PLANE_ID;
         self.edge_planes[2] = INVALID_PLANE_ID;
@@ -104,15 +111,49 @@ impl PolyBuffer {
 
     #[inline]
     pub(crate) fn push_raw(&mut self, u: f64, v: f64, vp: (PlaneId, PlaneId), ep: PlaneId) {
+        #[cfg(not(any(test, debug_assertions)))]
+        let _ = vp;
         let i = self.len;
         debug_assert!(i < MAX_POLY_VERTICES);
         unsafe {
             *self.us.get_unchecked_mut(i) = u;
             *self.vs.get_unchecked_mut(i) = v;
-            *self.vertex_planes.get_unchecked_mut(i) = vp;
+            #[cfg(any(test, debug_assertions))]
+            {
+                *self.vertex_planes.get_unchecked_mut(i) = vp;
+            }
             *self.edge_planes.get_unchecked_mut(i) = ep;
         }
         self.len = i + 1;
+    }
+
+    /// A vertex is incident to the preceding and outgoing boundary planes.
+    /// The clipper keeps a contiguous old boundary arc between its two new
+    /// intersections, so this identity survives even zero-length edges.
+    #[inline]
+    pub(crate) fn vertex_planes(&self, i: usize) -> (PlaneId, PlaneId) {
+        let prev = if i == 0 { self.len - 1 } else { i - 1 };
+        let pair = (self.edge_planes[prev], self.edge_planes[i]);
+        #[cfg(any(test, debug_assertions))]
+        {
+            let old = self.vertex_planes[i];
+            assert!(
+                old == pair || old == (pair.1, pair.0),
+                "vertex {i} provenance differs: stored {old:?}, adjacent {pair:?}"
+            );
+        }
+        pair
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn assert_boundary_provenance(&self) {
+        for i in 0..self.len {
+            self.vertex_planes(i);
+        }
+        assert_eq!(
+            self.has_bounding_ref,
+            self.edge_planes[..self.len].contains(&INVALID_PLANE_ID)
+        );
     }
 
     #[inline]

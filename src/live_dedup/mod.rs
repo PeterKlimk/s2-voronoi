@@ -18,7 +18,8 @@ mod shard;
 mod types;
 
 pub(crate) use cell_output::{
-    CellBuildError, CellFailure, CellOutputBuffer, VertexData, VertexKey,
+    sort3_u32, CellBuildError, CellFailure, CellOutputBuffer, VertexAttribution, VertexData,
+    VertexKey,
 };
 
 pub(crate) use binning::assign_bins;
