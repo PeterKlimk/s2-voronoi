@@ -328,7 +328,27 @@ fn emit_run<const WHOLE_SORT_SMALL: bool>(
     }
     let remaining = &mut keys[start..];
 
-    let n = if WHOLE_SORT_SMALL && remaining.len() <= 2 * n_target {
+    let n = if WHOLE_SORT_SMALL && n_target >= 8 && (9..=16).contains(&remaining.len()) {
+        use crate::generated::sort_nets::{
+            sort10_exact, sort11_exact, sort12_exact, sort13_exact, sort14_exact, sort15_exact,
+            sort16_exact, sort9_exact,
+        };
+        // SAFETY: the matched slice length proves every exact network's extent.
+        unsafe {
+            match remaining.len() {
+                9 => sort9_exact(remaining.as_mut_ptr()),
+                10 => sort10_exact(remaining.as_mut_ptr()),
+                11 => sort11_exact(remaining.as_mut_ptr()),
+                12 => sort12_exact(remaining.as_mut_ptr()),
+                13 => sort13_exact(remaining.as_mut_ptr()),
+                14 => sort14_exact(remaining.as_mut_ptr()),
+                15 => sort15_exact(remaining.as_mut_ptr()),
+                16 => sort16_exact(remaining.as_mut_ptr()),
+                _ => unreachable!(),
+            }
+        }
+        remaining.len().min(n_target)
+    } else if WHOLE_SORT_SMALL && remaining.len() <= 2 * n_target {
         sort_keys_u64(remaining);
         remaining.len().min(n_target)
     } else {

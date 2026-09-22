@@ -6,6 +6,7 @@ Generates:
 - sort8_net: 8-element network using registers
 - sort16_tail_out: 16-element hybrid network writing tail via out ptr
 - sort24_tail_out: 24-element hybrid network writing tail via out ptr
+- sort9_exact through sort16_exact: exact-size networks with no sentinel loads
 
 Uses data from sorting_networks.json
 """
@@ -227,6 +228,43 @@ def emit_hybrid_sort_tail_out(
     return "\n".join(lines)
 
 
+def emit_exact_networks(networks):
+    """Remove known sentinel lanes from the 16-wire network at generation time.
+
+    A wire tracks the physical register containing its value; None is +infinity.
+    Moving a live value across a sentinel is a rename, not a runtime comparator.
+    The final wire-to-register map determines the sorted store order.
+    """
+    lines = []
+    for n in range(9, 17):
+        wires = list(range(n)) + [None] * (16 - n)
+        ops = []
+        for i, j in networks["16"]["comparators"]:
+            i, j = min(i, j), max(i, j)
+            a, b = wires[i], wires[j]
+            if a is not None and b is not None:
+                ops.append((a, b))
+            elif a is None and b is not None:
+                wires[i], wires[j] = b, None
+        assert sorted(wires[:n]) == list(range(n))
+        assert all(v is None for v in wires[n:])
+        lines += [
+            f"/// Sort exactly {n} keys without padding or runtime tail handling.",
+            "///",
+            "/// # Safety",
+            f"/// `base` must point to {n} initialized, exclusively writable u64 values.",
+            f"pub(crate) unsafe fn sort{n}_exact(base: *mut u64) {{",
+        ]
+        for i in range(n):
+            lines.append(f"    let mut r{i} = ptr::read(base.add({i}));")
+        for a, b in ops:
+            lines.append(f"    cswap_reg(&mut r{a}, &mut r{b});")
+        for i, reg in enumerate(wires[:n]):
+            lines.append(f"    ptr::write(base.add({i}), r{reg});")
+        lines.append("}")
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -291,6 +329,7 @@ def main():
             microbench_variant=True,
         )
     )
+    output.append(emit_exact_networks(networks))
     output.append(emit_tests())
     rendered = format_rust("\n".join(output))
 

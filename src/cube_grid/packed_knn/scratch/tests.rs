@@ -322,3 +322,33 @@ fn directed_center_chunk_boundaries_match_safe_bruteforce() {
         }
     }
 }
+
+#[test]
+fn exact_networks_exhaustive_binary_inputs() {
+    use crate::generated::sort_nets::*;
+    for n in 9..=16 {
+        for bits in 0u32..(1u32 << n) {
+            let mut keys: Vec<u64> = (0..n)
+                .map(|i| if bits & (1 << i) != 0 { u64::MAX } else { 0 })
+                .collect();
+            let mut expected = keys.clone();
+            expected.sort_unstable();
+            // SAFETY: the initialized vector has exactly the matched extent.
+            unsafe {
+                match n {
+                    9 => sort9_exact(keys.as_mut_ptr()),
+                    10 => sort10_exact(keys.as_mut_ptr()),
+                    11 => sort11_exact(keys.as_mut_ptr()),
+                    12 => sort12_exact(keys.as_mut_ptr()),
+                    13 => sort13_exact(keys.as_mut_ptr()),
+                    14 => sort14_exact(keys.as_mut_ptr()),
+                    15 => sort15_exact(keys.as_mut_ptr()),
+                    16 => sort16_exact(keys.as_mut_ptr()),
+                    _ => unreachable!(),
+                }
+            }
+
+            assert_eq!(keys, expected);
+        }
+    }
+}

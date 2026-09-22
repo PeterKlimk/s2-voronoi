@@ -57,6 +57,18 @@ and mega instructions rise 0.17% and 0.03%. The
 [extraction follow-up](internal/september-2026-optimization.md#extraction-follow-up-exact-simd-and-deferred-coordinates)
 records these tradeoffs, bitwise checks, and two rejected deferred-coordinate designs.
 
+Reopening neighbor-history and incremental-selection experiments produced two more
+changes: reconstruct packed-stage stamps from retained keys only when advancing a
+frontier, and generate exact-size full sorting networks for 9–16 keys. Together
+they reduce native 1M Fibonacci/uniform instructions another 1.03%/1.09%, with
+branches down 0.15%/0.37%. Both preserve candidate order and output fingerprints;
+the sorting change adds approximately 4 KiB of text and increases the native
+cache-reference counter by 8–11%, despite fewer branch misses. Quiet throughput
+validation remains outstanding. The
+[reopened-experiment record](internal/september-2026-optimization.md#reopened-experiments-retained-neighbor-history-and-incremental-selection)
+includes portable, multiworker, 4M, and secondary controls plus the rejected heap,
+partial-network, and delayed-allocation variants.
+
 ## Point-location queries
 
 Point location reduces each complete shell layer to its nearest key without sorting

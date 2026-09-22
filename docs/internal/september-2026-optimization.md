@@ -416,3 +416,84 @@ library/API/correctness/adversarial/high-degree/edge-reconciliation/small-N suit
 The 100k native fingerprints match the baseline at one and six workers with six
 bins: representation `0991e1df6f60d5de`, semantic `961e56d915d09a4e`.
 Clippy with `tools,microbench,serde,glam`, formatting, and whitespace checks passed.
+
+### Incremental selection: rejected variants and an exact-size sorting control
+
+Reopening incremental selection produced a useful control rather than a retained
+incremental selector. Native 1M, one-worker, two-build/process, three-pair gates
+against the pre-history baseline:
+
+| Candidate | Fibonacci instructions / branches | Uniform instructions / branches |
+|---|---:|---:|
+| Incremental min-heap for 9–32 keys | +3.240% / +16.347% | +6.591% / +21.128% |
+| Pruned network producing only the first eight of 9–16 keys | -0.634% / +0.673% | +0.040% / +1.646% |
+| Full exact-size networks, safe-slice control | -0.594% / +0.532% | -0.643% / +0.344% |
+| Full exact-size networks, matched-extent pointer helper | -0.622% / +0.482% | -0.672% / +0.294% |
+
+The heap pays for sifting and dispatch. The partial network loses its advantage on
+uniform, where later candidates are more often needed. Full exact-size sorting
+preserves the existing batch sizes, order, bounds, and whole-sort threshold.
+Its benefit comes from avoiding padding and runtime tail handling, rather than
+avoiding full sorting. Raw gates: `heap.csv`, `network.csv`, `fullnet.csv`, `exact.csv`.
+
+The generator derives networks for lengths 9–16 from the existing 16-wire network.
+It propagates symbolic infinity wires, removes their comparisons, and tracks
+register renames through the final store permutation. The generated helpers load
+and store exactly their matched extent. The caller restricts them to the existing
+whole-sort path, with at least eight requested keys; other paths keep their prior
+sorts. The isolated native benchmark adds 4,128 bytes of text (0.18%). Portable
+isolated instructions improve 1.111%/1.064%, with branches down 0.507%/0.590%
+(`exact-generic.csv`). This implementation does not require AVX2.
+
+An exhaustive zero-one test checks all 130,560 binary inputs across lengths 9–16,
+using zero and `u64::MAX` and comparing the complete result with `sort_unstable`.
+This also checks multiset preservation and actual maximum-valued input keys.
+The existing packed-query and brute-force frontier suites exercise the dispatch
+and its unchanged batch semantics.
+
+Final native sorting controls are incremental to retained history reconstruction
+(`2449fe9` plus the same pre-existing working-tree edits), not to the earlier base:
+
+| Workload | Workers | Pairs | Fibonacci instructions / branches | Uniform instructions / branches |
+|---|---:|---:|---:|---:|
+| 1M, two builds/process | 1 | 5 | -0.606% / +0.159% | -0.664% / -0.042% |
+| 1M, three builds/process | 16 | 3 | -0.618% / +0.080% | -0.614% / -0.028% |
+| 4M, two builds/process | 16 | 3 | -0.641% / +0.102% | -0.696% / -0.077% |
+
+Every pair reduced instructions. Secondary 100k/one-worker instruction/branch
+changes are -0.645%/-0.496% clustered, -0.593%/-0.072% mega, and
+-0.645%/-0.229% cubed. The combined binary has 4,376 more text bytes than the
+history-only binary. These controls are `sort-incremental.csv`,
+`sort-16threads.csv`, `sort-4m.csv`, and `sort-secondary.csv`.
+
+A separate three-pair native 1M comparison of both retained changes against
+`b5a47be` measures -1.034% Fibonacci and -1.093% uniform instructions, with
+branches down 0.154%/0.368% (`combined-native.csv`). These are measured combined
+results, not sums of isolated percentages. Cycle counts remain too variable for
+a throughput claim.
+
+Portable final sorting controls reduce instructions 1.116%/1.069% and branches
+0.510%/0.594% relative to history-only (`sort-generic.csv`). A separate combined
+comparison against the pre-history portable baseline measures instruction
+reductions of 1.577%/1.599% and branch reductions of 1.101%/1.211%
+(`combined-generic.csv`), all in three alternating pairs.
+
+Cache/branch caveat: native sorting-only controls reduce branch misses
+3.228%/3.362% (all three pairs), but increase the generic `cache-references` event
+11.070%/8.389% (all pairs). Cache misses move +0.491%/+0.693%; uniform pair signs
+are mixed. Separate L1 measurements are highly variable: Fibonacci instruction
+cache misses range -9.3% to +30.2%, and uniform -29.9% to +33.0%. Data-cache
+misses also vary substantially. Raw files are `sort-misses.csv` and `sort-l1.csv`,
+with 100% event scheduling. Thus this is a reproducible instruction-count reduction
+with a cache-traffic tradeoff, not evidence that elapsed time improves by the same
+percentage. A quiet throughput comparison remains necessary to settle that question.
+
+Validation of the final combined implementation: full portable release suite
+418 passed, zero failed, 23 existing ignored; native checked library/API/
+correctness/adversarial/high-degree/edge-reconciliation/small-N suites 362 passed;
+scalar/no-default-feature library/correctness/locator 297 passed. The 100k native
+fingerprints remain `0991e1df6f60d5de` / `961e56d915d09a4e` at one and six workers
+with six bins. Generator freshness, formatting, whitespace checks, and Clippy
+with `tools,microbench,serde,glam` passed. Sources copied from the prototype were
+touched before final release/checked/fingerprint/Clippy validation to invalidate
+any Cargo artifacts newer than the copied source timestamps.
