@@ -356,3 +356,63 @@ key/position buffer split, which only changed loads and layout.
   ignored padding, error classification, and empty output on failure.
 - Clippy with `tools,microbench,serde,glam`, formatting, and diff whitespace checks
   passed. The scalar normalization implementation remains the checked oracle.
+
+## Reopened experiments: retained neighbor history and incremental selection
+
+Baseline: `b5a47be` plus the pre-existing working-tree edits. Artifacts are in
+`/tmp/voronoi-opt-round4`. Candidates are isolated against that baseline unless
+explicitly described as combined. Ordinary workloads remain the acceptance target;
+retired instructions and branches are the reproducible metrics on this busy host.
+
+### Retained: reconstruct packed-stage attempted-neighbor history
+
+The earlier lazy-stamp experiments recorded every attempted neighbor into another
+stream. The retained approach uses the exact keys already owned by packed-query
+scratch. Before advancing a nonterminating bounded frontier, construction records
+all keys in the exhausted stage into its existing stamp table. This happens before
+tail materialization can overwrite chunk-zero storage and before shell takeover
+can revisit those points. If a cell terminates in packed coverage, it avoids all
+of that stage's packed stamp writes. Seed and shell insertion behavior is unchanged;
+the stamp table remains allocated and is not advertised as a memory-footprint win.
+
+The key proof is a stage-boundary contract: reaching a bounded frontier requires
+consuming every earlier exact batch. A partially consumed batch ends the cell,
+so its unrecorded suffix can never affect a later shell traversal. Packed batches
+still process every occurrence exactly as before; only their stamp writes move.
+Runtime checks require an exhausted stage and a cached bounded frontier. Checked
+and unit-test builds retain an independent eager stamp table, assert that replay
+never introduces an unconsumed key, and compare every seed/shell dedup decision.
+Stream tests compare recovered stage keys with independently accumulated emitted
+keys at both ordinary and forced-low high-key budgets. An epoch-wrap test checks
+that both representations discard old history together.
+
+The first three native 1M/one-worker pairs reduced Fibonacci instructions/branches
+by 0.430%/0.313% and uniform by 0.432%/0.327%. This removes common-path recording
+without the old per-candidate list maintenance. `history.csv` holds that gate.
+
+A second variant delayed allocation and deduplicated seeds by scanning the existing
+incoming-check prefix, reconstructing seed stamps on transition as well. It added
+0.116%/0.248% instructions and 0.957%/1.026% branches on Fibonacci/uniform versus the
+baseline in all three pairs. The seed-scan and state-handling overhead gave back the
+packed-history saving; that variant was rejected (`lazy.csv`).
+
+Final controls (1M, two builds/process unless specified):
+
+| Build | Workers | Pairs | Fibonacci instructions / branches | Uniform instructions / branches |
+|---|---:|---:|---:|---:|
+| Native | 1 | 5 | -0.430% / -0.313% | -0.432% / -0.327% |
+| Portable | 1 | 3 | -0.467% / -0.594% | -0.535% / -0.621% |
+| Native, three builds/process | 16 | 3 | -0.448% / -0.328% | -0.432% / -0.302% |
+
+Secondary native 100k/one-worker controls show instructions/branches of
++0.206%/+0.476% for clustered, +0.058%/+0.064% for mega, and -0.354%/-0.215%
+for cubed. Retain under the stated Fibonacci/uniform priority. Raw files:
+`history-final.csv`, `history-generic.csv`, `history-16threads.csv`, and
+`history-secondary.csv`. No wall-time or cycle improvement is claimed.
+
+Validation: full portable release suite 417 passed, zero failed; native checked
+library/API/correctness/adversarial/high-degree/edge-reconciliation/small-N suites
+361 passed; scalar/no-default-feature library/correctness/locator 296 passed.
+The 100k native fingerprints match the baseline at one and six workers with six
+bins: representation `0991e1df6f60d5de`, semantic `961e56d915d09a4e`.
+Clippy with `tools,microbench,serde,glam`, formatting, and whitespace checks passed.

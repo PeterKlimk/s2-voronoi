@@ -140,9 +140,11 @@ fn source_specialized_attempted_neighbor_semantics() {
     let mut attempted = AttemptedNeighbors::new(4);
 
     // Both packed sources use this specialization: every occurrence is
-    // clipped, and each slot is marked for a later shell takeover.
+    // clipped; history is recorded only at the stage transition.
     assert!(should_clip_neighbor::<false>(&mut attempted, 1));
     assert!(should_clip_neighbor::<false>(&mut attempted, 1));
+    assert_ne!(attempted.seen_stamp[1], attempted.stamp);
+    attempted.mark(1); // stage-boundary replay
     assert!(!should_clip_neighbor::<true>(&mut attempted, 1));
 
     // Shell batches deduplicate both within the shell and against marks left
@@ -502,6 +504,7 @@ fn probe_early_extraction_cell(
                             &mut stream,
                             &mut ctx.frontier_keys,
                             &mut ctx.builder,
+                            &mut ctx.attempted_neighbors,
                             &mut counters,
                         );
                     }
@@ -510,6 +513,7 @@ fn probe_early_extraction_cell(
                     if ctx.builder.is_bounded() && ctx.builder.can_terminate(dot_upper_bound) {
                         counters.terminated = true;
                     } else {
+                        ctx.attempted_neighbors.record_packed_stage(&stream);
                         stream.advance_frontier();
                     }
                 }
@@ -1374,4 +1378,17 @@ fn forced_handoff_mid_build_still_finishes_the_cell() {
     );
     assert!(ctx.builder.accepted_constraint_count() >= 3);
     assert!(!stats.knn_exhausted || !stats.did_packed);
+}
+
+#[test]
+fn reconstructed_attempts_reset_on_epoch_wrap() {
+    let mut attempted = AttemptedNeighbors::new(4);
+    attempted.stamp = u32::MAX - 1;
+    assert!(should_clip_neighbor::<false>(&mut attempted, 2));
+    attempted.mark(2);
+    assert!(!should_clip_neighbor::<true>(&mut attempted, 2));
+    attempted.clear();
+    assert_eq!(attempted.stamp, 1);
+    assert!(should_clip_neighbor::<true>(&mut attempted, 2));
+    assert!(!should_clip_neighbor::<true>(&mut attempted, 2));
 }

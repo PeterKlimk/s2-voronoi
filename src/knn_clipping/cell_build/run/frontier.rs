@@ -46,6 +46,7 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
     frontier_keys: &mut Vec<NeighborKey>,
     builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
+    attempted_neighbors: &mut super::AttemptedNeighbors,
     counters: &mut super::BuildCounters,
 ) -> bool {
     let frontier = probe_frontier(
@@ -83,6 +84,7 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
                     .record_termination_checkpoint(super::TerminationCheckpoint::PackedPostBatch);
                 true
             } else {
+                attempted_neighbors.record_packed_stage(stream);
                 stream.advance_frontier();
                 false
             }

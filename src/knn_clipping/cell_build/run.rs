@@ -22,6 +22,9 @@ use glam::Vec3;
 
 /// Per-cell "already attempted this neighbor" set, stamp-based to avoid an
 /// O(n) clear per cell.
+/// Seeds and shell candidates update it immediately. Packed stages reconstruct
+/// their history from retained keys only when advancing past the stage's bound;
+/// cells that terminate within packed coverage never need those stamp writes.
 ///
 /// Keyed by the neighbor's **SOA slot**, not its global point index. Both
 /// uniquely identify a point (slot↔index is a permutation), so dedup semantics
@@ -31,6 +34,8 @@ use glam::Vec3;
 /// order. (`seen_stamp` is num_points entries; slots are in `[0, num_points)`.)
 struct AttemptedNeighbors {
     seen_stamp: Vec<u32>,
+    #[cfg(any(test, debug_assertions))]
+    eager_seen_stamp: Vec<u32>,
     stamp: u32,
 }
 
@@ -39,6 +44,8 @@ impl AttemptedNeighbors {
     fn new(num_points: usize) -> Self {
         Self {
             seen_stamp: vec![0; num_points],
+            #[cfg(any(test, debug_assertions))]
+            eager_seen_stamp: vec![0; num_points],
             stamp: 1,
         }
     }
@@ -48,6 +55,8 @@ impl AttemptedNeighbors {
         self.stamp = self.stamp.wrapping_add(1).max(1);
         if self.stamp == u32::MAX {
             self.seen_stamp.fill(0);
+            #[cfg(any(test, debug_assertions))]
+            self.eager_seen_stamp.fill(0);
             self.stamp = 1;
         }
     }
@@ -55,11 +64,36 @@ impl AttemptedNeighbors {
     #[inline]
     fn insert(&mut self, slot: usize) -> bool {
         debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
+        #[cfg(any(test, debug_assertions))]
+        {
+            assert_eq!(
+                self.seen_stamp[slot] == self.stamp,
+                self.eager_seen_stamp[slot] == self.stamp,
+                "stage replay changed neighbor deduplication"
+            );
+            self.eager_seen_stamp[slot] = self.stamp;
+        }
         if self.seen_stamp[slot] == self.stamp {
             return false;
         }
         self.seen_stamp[slot] = self.stamp;
         true
+    }
+
+    // Every exact batch has been consumed before a bounded frontier can advance.
+    // Record its stage before tail materialization reuses the keys, or before
+    // shell takeover re-covers candidates. Seed stamps remain live throughout.
+    #[cold]
+    fn record_packed_stage(&mut self, stream: &DirectedNeighborStream<'_, '_, '_, '_>) {
+        for &key in stream.completed_packed_keys() {
+            let slot = crate::cube_grid::neighbor_key_slot(key) as usize;
+            #[cfg(any(test, debug_assertions))]
+            assert_eq!(
+                self.eager_seen_stamp[slot], self.stamp,
+                "replayed an unconsumed key"
+            );
+            self.mark(slot);
+        }
     }
 
     #[inline]
@@ -586,7 +620,10 @@ fn should_clip_neighbor<const SHELL: bool>(
         // The takeover re-covers packed-served points; dedup on insertion.
         attempted_neighbors.insert(neighbor_slot)
     } else {
-        attempted_neighbors.mark(neighbor_slot);
+        #[cfg(any(test, debug_assertions))]
+        {
+            attempted_neighbors.eager_seen_stamp[neighbor_slot] = attempted_neighbors.stamp;
+        }
         true
     }
 }
@@ -932,6 +969,7 @@ fn consume_stream(
                         stream,
                         frontier_keys,
                         phase.builder,
+                        phase.attempted_neighbors,
                         counters,
                     );
                 }
@@ -944,6 +982,7 @@ fn consume_stream(
                     counters.record_termination_checkpoint(TerminationCheckpoint::PackedPostBatch);
                     counters.terminated = true;
                 } else {
+                    phase.attempted_neighbors.record_packed_stage(stream);
                     stream.advance_frontier();
                 }
             }

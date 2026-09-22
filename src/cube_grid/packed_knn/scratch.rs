@@ -90,6 +90,16 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
         self.scratch.current_keys(qi, stage, start, n)
     }
 
+    pub(super) fn completed_keys(&self, qi: usize, stage: PackedStage) -> &[u64] {
+        let keys = &self.scratch.query_keys[qi];
+        let pos = match stage {
+            PackedStage::Chunk0 => self.scratch.chunk0_pos[qi],
+            PackedStage::Tail => self.scratch.tail_pos[qi],
+        };
+        assert_eq!(pos, keys.len(), "history requires exhausted packed stage");
+        keys
+    }
+
     #[inline]
     pub(super) fn ensure_tail_directed_for(
         &mut self,

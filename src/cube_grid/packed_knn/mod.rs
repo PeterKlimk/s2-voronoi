@@ -287,6 +287,21 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         PackedNeighborFrontier::UnknownButBounded { dot_upper_bound }
     }
 
+    /// All keys emitted by the stage ending at the cached bounded frontier.
+    /// Read before advancing: tail materialization reuses this allocation.
+    pub(crate) fn completed_keys(&self) -> &[u64] {
+        assert!(matches!(
+            self.cached_frontier,
+            Some(CachedFrontier::UnknownButBounded { .. })
+        ));
+        let stage = match self.stage {
+            PackedQueryStage::Chunk0 => PackedStage::Chunk0,
+            PackedQueryStage::Tail => PackedStage::Tail,
+            PackedQueryStage::Exhausted => unreachable!(),
+        };
+        self.prepared.completed_keys(self.query_index, stage)
+    }
+
     /// Consume the cached frontier. Any exact-key borrow must end before this call.
     pub(crate) fn advance_frontier(&mut self, grid: &CubeMapGrid) {
         let cached = self.cached_frontier.take();

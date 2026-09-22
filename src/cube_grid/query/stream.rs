@@ -206,6 +206,20 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         }
     }
 
+    /// Retained history at a cached bounded frontier. Construction calls this
+    /// only after consuming the stage's exact batches and rejecting its bound.
+    /// The borrow must end before advancing can reuse the packed key storage.
+    pub(crate) fn completed_packed_keys(&self) -> &[NeighborKey] {
+        assert!(matches!(
+            self.cached_frontier,
+            Some(CachedFrontier::UnknownButBounded { .. })
+        ));
+        self.packed
+            .as_ref()
+            .expect("bounded frontier requires packed query")
+            .completed_keys()
+    }
+
     /// Consume the cached frontier. After this call the caller may freely
     /// clear or reuse the buffer passed to [`Self::frontier`].
     pub(crate) fn advance_frontier(&mut self) {
@@ -441,7 +455,7 @@ mod tests {
         const N: usize = 320;
         const RES: usize = 10;
 
-        for &seed in &[5u64, 29, 777] {
+        for (seed, hi_budget) in [(5u64, 1), (29, 1), (777, 1), (5, 64), (29, 64), (777, 64)] {
             let points = random_unit_points(N, seed);
             let grid = CubeMapGrid::new(&points, RES);
             let cell = fullest_cell(&grid);
@@ -463,7 +477,7 @@ mod tests {
                 layout,
             );
             {
-                let mut packed_scratch = PackedKnnCellScratch::new();
+                let mut packed_scratch = PackedKnnCellScratch::new_with_hi_policy(hi_budget, 0);
                 let mut packed_telemetry = PackedKnnTelemetry::default();
                 let PreparedPackedGroupStatus::Ready(mut prepared) =
                     packed_scratch.prepare_group_directed(&grid, group, &mut packed_telemetry)
@@ -496,6 +510,7 @@ mod tests {
                         directed_bruteforce_slots(&grid, &points, query_idx, query_local);
                     let mut seen = vec![false; points.len()];
                     let mut batch = Vec::new();
+                    let mut stage_history = Vec::new();
 
                     loop {
                         let best_unseen_dot = expected
@@ -509,6 +524,9 @@ mod tests {
                         match stream.frontier(&mut batch) {
                             DirectedNeighborFrontier::ExactBatch(result) => {
                                 let keys = stream.exact_keys(&batch);
+                                if result.source != DirectedNeighborBatchSource::ShellExpand {
+                                    stage_history.extend_from_slice(keys);
+                                }
                                 for &key in keys {
                                     let slot = crate::cube_grid::neighbor_key_slot(key);
                                     let neighbor_idx = grid.point_indices()[slot as usize] as usize;
@@ -518,6 +536,11 @@ mod tests {
                                 stream.advance_frontier();
                             }
                             DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+                                let mut recovered = stream.completed_packed_keys().to_vec();
+                                recovered.sort_unstable();
+                                stage_history.sort_unstable();
+                                assert_eq!(recovered, stage_history);
+                                stage_history.clear();
                                 assert!(
                                     best_unseen_dot <= dot_upper_bound + 1e-6,
                                     "frontier bound underestimated best unseen neighbor for seed={seed}, qi={qi}"
