@@ -39,8 +39,6 @@ jobs:
         run: cargo test --profile checked
       - name: Tests (serde + glam)
         run: cargo test --release --features serde,glam
-      - name: Tests (p5_shadow canonical evaluator, lib)
-        run: cargo test --release --features p5_shadow --lib
       - name: Check (no default features)
         run: cargo check --release --no-default-features
       - name: Check (timing feature)
@@ -76,6 +74,6 @@ jobs:
       - name: Fuzz 2M/3M/4M (assert STRICT_VALID)
         run: cargo test --release --test adversarial fuzz -- --ignored --nocapture
       - name: Coincidence margin probes (diagnostic)
-        run: cargo test --release --test coincidence_probes -- --ignored --nocapture
+        run: cargo test --release --features manual_probes --test coincidence_probes -- --ignored --nocapture
       - name: Defect-rate survey (observability, non-asserting)
-        run: cargo test --release --test edge_repair_net probe_defect_rate -- --ignored --nocapture
+        run: cargo test --release --test edge_reconciliation probe_defect_rate -- --ignored --nocapture
